@@ -4,3 +4,7 @@
 # Go
 bin/
 dist/
+
+# my test log dump
+test.out
+lint.out

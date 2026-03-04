@@ -30,6 +30,63 @@ const (
 	// extended public key.
 	XPubType GlobalType = 1
 
+	// The following section includes global type changes stated in the BIP-174/370 spec
+	// https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#specification
+	// https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#specification
+	// Question/TODO: BIP-375 Types? ECDHShare & DLEQ?
+	// ================================================
+	// ============= BIP-370 GLOBAL TYPES =============
+	// ================================================
+	//
+
+	// TxVersionType is the transaction version for PSBTv2.
+	//
+	// The key ({0x02}) has no additional key data.
+	// The value is a 32-bit little-endian unsigned integer.
+	// In PSBTv0 this field was _inside_ the unsigned transaction.
+	//
+	// **Required** in v2; **invalid** in v0.
+	TxVersionType GlobalType = 0x02
+
+	// FallbackLocktimeType is the fallback locktime for PSBTv2.
+	//
+	// The key ({0x03}) has no additional key data.
+	// The value is a 32-bit little-endian unsigned integer.
+	// **Optional**; used only when no inputs specify a required locktime.
+	FallbackLocktimeType GlobalType = 0x03
+
+	// InputCountType is the number of inputs for a PSBTv2 transaction.
+	//
+	// The key ({0x04}) has no additional key data.
+	// The value is a compact-size (varint) unsigned integer, representing
+	// the number of inputs.
+	// **Required** in v2; **invalid** in v0.
+	InputCountType GlobalType = 0x04
+
+	// OutputCountType is the number of outputs for a PSBTv2 transaction.
+	//
+	// The key ({0x05}) has no additional key data.
+	// The value is a compact-size (varint) unsigned integer, representing
+	// the number of outputs.
+	// **Required** in v2; **invalid** in v0.
+	OutputCountType GlobalType = 0x05
+
+	// TxModifiableType indicates the modifiability flags for PSBTv2.
+	//
+	// The key ({0x06}) has no additional key data.
+	// The value is an 8-bit little endian unsigned integer as a bitfield.
+	//
+	// Bit 0: Inputs modifiable.
+	// Bit 1: Outputs modifiable.
+	// Bit 2: Has a SIGHASH_SINGLE sig
+	//
+	// This type is **optional**.
+	TxModifiableType GlobalType = 0x06
+
+	// ================================================
+	// =========== BIP-370 GLOBAL TYPES END ===========
+	// ================================================
+
 	// VersionType houses the global version number of this PSBT. There is
 	// no key (only contains the byte type), then the value if omitted, is
 	// assumed to be zero.
@@ -83,7 +140,7 @@ const (
 	// provide a signature.
 	SighashType InputType = 3
 
-	// RedeemScriptInputType is an empty key ({0x40}).
+	// RedeemScriptInputType is an empty key ({0x04}).
 	//
 	// The value is the redeem script of the input if present.
 	RedeemScriptInputType InputType = 4
@@ -113,6 +170,67 @@ const (
 	// fully constructed scriptWitness with signatures and any other
 	// scripts necessary for the input to pass validation.
 	FinalScriptWitnessType InputType = 8
+
+	// The following section includes input type changes stated in the BIP-174/370 spec
+	// Question/TODO: BIP-375 Types? ECDHShare & DLEQ?
+	// ================================================
+	// ============== BIP-370 INPUT TYPES =============
+	// ================================================
+	//
+
+	// PreviousTxIDType is the 32-byte txid of the previous output.
+	//
+	// The key ({0x0E}) has no additional key data. The value is a 32-byte hash.
+	// It replaces the unsigned tx's input prevout. Since it's standalone, inputs
+	// can be added/removed without re-serializing.
+	// Standard byte order, not the displayed one.
+	//
+	// **Required** in v2; **invalid** in v0.
+	PreviousTxIDType InputType = 0x0e
+
+	// OutputIndexType is the index of the output in the previous transaction.
+	//
+	// The key ({0x0F}) has no additional key data.
+	// The value is a 32-bit little-endian unsigned integer.
+	// Uniquely identifies the UTXO with PreviousTxID.
+	//
+	// **Required** in v2; **invalid** in v0.
+	OutputIndexType InputType = 0x0f
+
+	// SequenceType is the sequence number for the input.
+	//
+	// The key ({0x10}) has no additional key data.
+	// The value is a 32-bit little-endian unsigned integer for the sequence
+	// number of the input.
+	//
+	// **Optional**; defaults to 0xFFFFFFFF when absent.
+	SequenceType InputType = 0x10
+
+	// RequiredTimeLocktimeType is the minimum time-based locktime.
+	//
+	// The key ({0x11}) has no additional key data.
+	// The value is a 32-bit little-endian unsigned integer.
+	//
+	// Represents the minimum Unix timestamp the input requires to be set
+	// as the locktime.
+	//
+	// Must be >= 500000000.
+	RequiredTimeLocktimeType InputType = 0x11
+
+	// RequiredHeightLocktimeType is the minimum height-based locktime.
+	//
+	// The key ({0x12}) has no additional key data.
+	// The value is a 32-bit little-endian unsigned integer.
+	//
+	// Represents the minimum block height the input requires to be set
+	// as the locktime.
+	//
+	// Must be < 500000000.
+	RequiredHeightLocktimeType InputType = 0x12
+
+	// ================================================
+	// =========== BIP-370 INPUT TYPES END ============
+	// ================================================
 
 	// TaprootKeySpendSignatureType is an empty key ({0x13}). The value is
 	// a 64-byte Schnorr signature or a 65-byte Schnorr signature with the
@@ -183,6 +301,30 @@ const (
 	// little endian unsigned integer indexes concatenated with each other.
 	// Public keys are those needed to spend this output.
 	Bip32DerivationOutputType OutputType = 2
+
+	// ================================================
+	// ============= BIP-370 OUTPUT TYPES =============
+	// ================================================
+	//
+	// AmountType is the output value in satoshis.
+	//
+	// The key ({0x03}) has no additional key data.
+	// The value is a 64-bit little-endian signed integer.
+	//
+	// **Required** in v2; **invalid** in v0.
+	AmountType OutputType = 3
+
+	// ScriptType is the output scriptPubKey.
+	//
+	// The key ({0x04}) has no additional key data.
+	// The value is the raw scriptPubKey bytes.
+	//
+	// **Required** in v2; **invalid** in v0.
+	ScriptType OutputType = 4
+
+	// ================================================
+	// =========== BIP-370 OUTPUT TYPES END ===========
+	// ================================================
 
 	// TaprootInternalKeyOutputType is an empty key ({0x05}). The value is
 	// an x-only pubkey denoting the internal public key used for
