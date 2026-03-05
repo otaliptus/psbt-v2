@@ -343,3 +343,7 @@ const (
 	// is then identical to the Bip32DerivationInputType value.
 	TaprootBip32DerivationOutputType OutputType = 7
 )
+
+// Separator for height-based locktimes and time-based locktimes.
+// val < 500_000_000 --> block height; otherwise Unix Timestamp.
+const LocktimeThreshold = 500_000_000

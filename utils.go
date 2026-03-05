@@ -224,6 +224,30 @@ func serializeKVPairWithType(w io.Writer, kt uint8, keydata []byte,
 	return serializeKVpair(w, serializedKey, value)
 }
 
+// appendUnknownKV appends a raw key-value pair to an unknown list.
+//
+// The stored key is the full serialized key: {keyType} || {keyData}.
+// Returns ErrDuplicateKey if an identical unknown entry already exists.
+func appendUnknownKV(unknowns *[]*Unknown, keyCode int, keyData, value []byte) error {
+	keyCodeAndData := append([]byte{byte(keyCode)}, keyData...)
+	newUnknown := &Unknown{
+		Key:   keyCodeAndData,
+		Value: value,
+	}
+
+	// Duplicate key+keyData are not allowed.
+	for _, x := range *unknowns {
+		if bytes.Equal(x.Key, newUnknown.Key) &&
+			bytes.Equal(x.Value, newUnknown.Value) {
+
+			return ErrDuplicateKey
+		}
+	}
+
+	*unknowns = append(*unknowns, newUnknown)
+	return nil
+}
+
 // getKey retrieves a single key - both the key type and the keydata (if
 // present) from the stream and returns the key type as an integer, or -1 if
 // the key was of zero length. This integer is used to indicate the presence

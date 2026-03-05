@@ -6,6 +6,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
@@ -29,6 +30,13 @@ type PInput struct {
 	TaprootInternalKey     []byte
 	TaprootMerkleRoot      []byte
 	Unknowns               []*Unknown
+
+	// PSBTv2 fields
+	PreviousTxID           *chainhash.Hash // 0x0E: 32-byte txid, required in v2
+	OutputIndex            *uint32         // 0x0F: prevout index, required in v2
+	Sequence               *uint32         // 0x10: sequence number, optional, default 0xFFFFFFFF
+	RequiredTimeLocktime   *uint32         // 0x11: val >= 500_000_000
+	RequiredHeightLocktime *uint32         // 0x12: val < 500_000_000
 }
 
 // NewPsbtInput creates an instance of PsbtInput given either a nonWitnessUtxo
@@ -363,6 +371,130 @@ func (pi *PInput) deserialize(r io.Reader) error {
 
 			pi.TaprootMerkleRoot = value
 
+		// PSBTv2 per-input types (0x0E-0x12).
+		// TODO(psbtv2): Once parsing is version-gated, enforce canonical v2
+		// singleton keys (keyData == nil) under version==2 and remove this
+		// compatibility fallback.
+		case PreviousTxIDType:
+			if pi.PreviousTxID != nil {
+				return ErrDuplicateKey
+			}
+			if keyData != nil {
+				// Preserve forward-compatibility: same type byte with
+				// extra key data is treated as an unknown key.
+				err := appendUnknownKV(
+					&pi.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+			if len(value) != 32 {
+				return ErrInvalidPsbtFormat
+			}
+			var txid chainhash.Hash
+			copy(txid[:], value)
+			pi.PreviousTxID = &txid
+
+		case OutputIndexType:
+			if pi.OutputIndex != nil {
+				return ErrDuplicateKey
+			}
+
+			if keyData != nil {
+				// Preserve forward-compatibility: same type byte with
+				// extra key data is treated as an unknown key.
+				err := appendUnknownKV(
+					&pi.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+
+			if len(value) != 4 {
+				return ErrInvalidPsbtFormat
+			}
+			idx := binary.LittleEndian.Uint32(value)
+			pi.OutputIndex = &idx
+
+		case SequenceType:
+			if pi.Sequence != nil {
+				return ErrDuplicateKey
+			}
+
+			if keyData != nil {
+				// Preserve forward-compatibility: same type byte with
+				// extra key data is treated as an unknown key.
+				err := appendUnknownKV(
+					&pi.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+
+			if len(value) != 4 {
+				return ErrInvalidPsbtFormat
+			}
+			seq := binary.LittleEndian.Uint32(value)
+			pi.Sequence = &seq
+
+		case RequiredTimeLocktimeType:
+			if pi.RequiredTimeLocktime != nil {
+				return ErrDuplicateKey
+			}
+
+			if keyData != nil {
+				// Preserve forward-compatibility: same type byte with
+				// extra key data is treated as an unknown key.
+				err := appendUnknownKV(
+					&pi.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+
+			if len(value) != 4 {
+				return ErrInvalidPsbtFormat
+			}
+			t := binary.LittleEndian.Uint32(value)
+			if t < LocktimeThreshold {
+				return ErrInvalidPsbtFormat
+			}
+			pi.RequiredTimeLocktime = &t
+
+		case RequiredHeightLocktimeType:
+			if pi.RequiredHeightLocktime != nil {
+				return ErrDuplicateKey
+			}
+
+			if keyData != nil {
+				// Preserve forward-compatibility: same type byte with
+				// extra key data is treated as an unknown key.
+				err := appendUnknownKV(
+					&pi.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+
+			if len(value) != 4 {
+				return ErrInvalidPsbtFormat
+			}
+			h := binary.LittleEndian.Uint32(value)
+			if h == 0 || h >= LocktimeThreshold {
+				return ErrInvalidPsbtFormat
+			}
+			pi.RequiredHeightLocktime = &h
+
 		default:
 			// A fall through case for any proprietary types.
 			keyCodeAndData := append(
@@ -483,7 +615,79 @@ func (pi *PInput) serialize(w io.Writer) error {
 				return err
 			}
 		}
+	}
 
+	if pi.FinalScriptSig != nil {
+		err := serializeKVPairWithType(
+			w, uint8(FinalScriptSigType), nil, pi.FinalScriptSig,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	if pi.FinalScriptWitness != nil {
+		err := serializeKVPairWithType(
+			w, uint8(FinalScriptWitnessType), nil,
+			pi.FinalScriptWitness,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// PSBTv2 per-input fields (0x0E-0x12).
+	if pi.PreviousTxID != nil {
+		err := serializeKVPairWithType(
+			w, uint8(PreviousTxIDType), nil,
+			pi.PreviousTxID[:],
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if pi.OutputIndex != nil {
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], *pi.OutputIndex)
+		err := serializeKVPairWithType(
+			w, uint8(OutputIndexType), nil, buf[:],
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if pi.Sequence != nil {
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], *pi.Sequence)
+		err := serializeKVPairWithType(
+			w, uint8(SequenceType), nil, buf[:],
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if pi.RequiredTimeLocktime != nil {
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], *pi.RequiredTimeLocktime)
+		err := serializeKVPairWithType(
+			w, uint8(RequiredTimeLocktimeType), nil, buf[:],
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if pi.RequiredHeightLocktime != nil {
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], *pi.RequiredHeightLocktime)
+		err := serializeKVPairWithType(
+			w, uint8(RequiredHeightLocktimeType), nil, buf[:],
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	if pi.FinalScriptSig == nil && pi.FinalScriptWitness == nil {
 		if pi.TaprootKeySpendSig != nil {
 			err := serializeKVPairWithType(
 				w, uint8(TaprootKeySpendSignatureType), nil,
@@ -571,24 +775,6 @@ func (pi *PInput) serialize(w io.Writer) error {
 			if err != nil {
 				return err
 			}
-		}
-	}
-
-	if pi.FinalScriptSig != nil {
-		err := serializeKVPairWithType(
-			w, uint8(FinalScriptSigType), nil, pi.FinalScriptSig,
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	if pi.FinalScriptWitness != nil {
-		err := serializeKVPairWithType(
-			w, uint8(FinalScriptWitnessType), nil, pi.FinalScriptWitness,
-		)
-		if err != nil {
-			return err
 		}
 	}
 

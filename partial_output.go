@@ -2,6 +2,7 @@ package psbt
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"sort"
 
@@ -18,6 +19,10 @@ type POutput struct {
 	TaprootTapTree         []byte
 	TaprootBip32Derivation []*TaprootBip32Derivation
 	Unknowns               []*Unknown
+
+	// PSBTv2 fields
+	Amount *int64 // 0x03: amount in sats, required in v2
+	Script []byte // 0x04: scriptPubKey, required in v2
 }
 
 // NewPsbtOutput creates an instance of PsbtOutput; the three parameters
@@ -144,6 +149,56 @@ func (po *POutput) deserialize(r io.Reader) error {
 				po.TaprootBip32Derivation, taprootDerivation,
 			)
 
+		// PSBTv2
+		// TODO(psbtv2): Once parsing is version-gated, enforce canonical v2
+		// singleton keys (keyData == nil) under version==2 and remove this
+		// compatibility fallback.
+		case AmountType:
+			if po.Amount != nil {
+				return ErrDuplicateKey
+			}
+			if keyData != nil {
+				// Preserve forward-compatibility: same type byte with
+				// extra key data is treated as an unknown key.
+				err := appendUnknownKV(
+					&po.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+			// int64 - 8 bytes
+			if len(value) != 8 {
+				return ErrInvalidPsbtFormat
+			}
+
+			amount := int64(binary.LittleEndian.Uint64(value))
+
+			if amount < 0 {
+				return ErrInvalidPsbtFormat
+			}
+
+			po.Amount = &amount
+
+		case ScriptType:
+			if po.Script != nil {
+				return ErrDuplicateKey
+			}
+			if keyData != nil {
+				// Preserve forward-compatibility: same type byte with
+				// extra key data is treated as an unknown key.
+				err := appendUnknownKV(
+					&po.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+			// var-len, no size check
+			po.Script = value
+
 		default:
 			// A fall through case for any proprietary types.
 			keyCodeAndData := append(
@@ -199,6 +254,26 @@ func (po *POutput) serialize(w io.Writer) error {
 				kd.MasterKeyFingerprint,
 				kd.Bip32Path,
 			),
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// PSBTv2 per-output fields (0x03-0x04).
+	if po.Amount != nil {
+		var buf [8]byte
+		binary.LittleEndian.PutUint64(buf[:], uint64(*po.Amount))
+		err := serializeKVPairWithType(
+			w, uint8(AmountType), nil, buf[:],
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if po.Script != nil {
+		err := serializeKVPairWithType(
+			w, uint8(ScriptType), nil, po.Script,
 		)
 		if err != nil {
 			return err
