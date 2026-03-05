@@ -154,9 +154,6 @@ func (po *POutput) deserialize(r io.Reader) error {
 		// singleton keys (keyData == nil) under version==2 and remove this
 		// compatibility fallback.
 		case AmountType:
-			if po.Amount != nil {
-				return ErrDuplicateKey
-			}
 			if keyData != nil {
 				// Preserve forward-compatibility: same type byte with
 				// extra key data is treated as an unknown key.
@@ -167,6 +164,9 @@ func (po *POutput) deserialize(r io.Reader) error {
 					return err
 				}
 				break
+			}
+			if po.Amount != nil {
+				return ErrDuplicateKey
 			}
 			// int64 - 8 bytes
 			if len(value) != 8 {
@@ -182,9 +182,6 @@ func (po *POutput) deserialize(r io.Reader) error {
 			po.Amount = &amount
 
 		case ScriptType:
-			if po.Script != nil {
-				return ErrDuplicateKey
-			}
 			if keyData != nil {
 				// Preserve forward-compatibility: same type byte with
 				// extra key data is treated as an unknown key.
@@ -195,6 +192,9 @@ func (po *POutput) deserialize(r io.Reader) error {
 					return err
 				}
 				break
+			}
+			if po.Script != nil {
+				return ErrDuplicateKey
 			}
 			// var-len, no size check
 			po.Script = value

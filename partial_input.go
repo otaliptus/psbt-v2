@@ -376,9 +376,6 @@ func (pi *PInput) deserialize(r io.Reader) error {
 		// singleton keys (keyData == nil) under version==2 and remove this
 		// compatibility fallback.
 		case PreviousTxIDType:
-			if pi.PreviousTxID != nil {
-				return ErrDuplicateKey
-			}
 			if keyData != nil {
 				// Preserve forward-compatibility: same type byte with
 				// extra key data is treated as an unknown key.
@@ -389,6 +386,9 @@ func (pi *PInput) deserialize(r io.Reader) error {
 					return err
 				}
 				break
+			}
+			if pi.PreviousTxID != nil {
+				return ErrDuplicateKey
 			}
 			if len(value) != 32 {
 				return ErrInvalidPsbtFormat
@@ -398,10 +398,6 @@ func (pi *PInput) deserialize(r io.Reader) error {
 			pi.PreviousTxID = &txid
 
 		case OutputIndexType:
-			if pi.OutputIndex != nil {
-				return ErrDuplicateKey
-			}
-
 			if keyData != nil {
 				// Preserve forward-compatibility: same type byte with
 				// extra key data is treated as an unknown key.
@@ -412,6 +408,9 @@ func (pi *PInput) deserialize(r io.Reader) error {
 					return err
 				}
 				break
+			}
+			if pi.OutputIndex != nil {
+				return ErrDuplicateKey
 			}
 
 			if len(value) != 4 {
@@ -421,10 +420,6 @@ func (pi *PInput) deserialize(r io.Reader) error {
 			pi.OutputIndex = &idx
 
 		case SequenceType:
-			if pi.Sequence != nil {
-				return ErrDuplicateKey
-			}
-
 			if keyData != nil {
 				// Preserve forward-compatibility: same type byte with
 				// extra key data is treated as an unknown key.
@@ -435,6 +430,9 @@ func (pi *PInput) deserialize(r io.Reader) error {
 					return err
 				}
 				break
+			}
+			if pi.Sequence != nil {
+				return ErrDuplicateKey
 			}
 
 			if len(value) != 4 {
@@ -444,10 +442,6 @@ func (pi *PInput) deserialize(r io.Reader) error {
 			pi.Sequence = &seq
 
 		case RequiredTimeLocktimeType:
-			if pi.RequiredTimeLocktime != nil {
-				return ErrDuplicateKey
-			}
-
 			if keyData != nil {
 				// Preserve forward-compatibility: same type byte with
 				// extra key data is treated as an unknown key.
@@ -458,6 +452,9 @@ func (pi *PInput) deserialize(r io.Reader) error {
 					return err
 				}
 				break
+			}
+			if pi.RequiredTimeLocktime != nil {
+				return ErrDuplicateKey
 			}
 
 			if len(value) != 4 {
@@ -470,10 +467,6 @@ func (pi *PInput) deserialize(r io.Reader) error {
 			pi.RequiredTimeLocktime = &t
 
 		case RequiredHeightLocktimeType:
-			if pi.RequiredHeightLocktime != nil {
-				return ErrDuplicateKey
-			}
-
 			if keyData != nil {
 				// Preserve forward-compatibility: same type byte with
 				// extra key data is treated as an unknown key.
@@ -484,6 +477,9 @@ func (pi *PInput) deserialize(r io.Reader) error {
 					return err
 				}
 				break
+			}
+			if pi.RequiredHeightLocktime != nil {
+				return ErrDuplicateKey
 			}
 
 			if len(value) != 4 {
