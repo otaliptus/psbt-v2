@@ -124,8 +124,22 @@ type Unknown struct {
 // with N inputs and M outputs.  These key-value pairs can contain scripts,
 // signatures, key derivations and other transaction-defining data.
 type Packet struct {
+	// Version is the PSBT version:
+	//   0 = BIP-174 (PSBTv0)
+	//   2 = BIP-370 (PSBTv2)
+	//
+	// A zero value defaults to v0 behavior for backward compatibility.
+	Version uint32
+
 	// UnsignedTx is the decoded unsigned transaction for this PSBT.
+	// It is **required** for v0 and should be **nil** for v2.
 	UnsignedTx *wire.MsgTx // Deserialization of unsigned tx
+
+	// PSBTv2 global fields.
+	// For v0 packets these remain **zero/nil**.
+	TxVersion        int32   // 0x02 (32-bit LE-int per BIP)
+	FallbackLocktime *uint32 // 0x03
+	TxModifiable     *uint8  // 0x06
 
 	// Inputs contains all the information needed to properly sign this
 	// target input within the above transaction.
@@ -465,4 +479,155 @@ func (p *Packet) GetTxFee() (btcutil.Amount, error) {
 
 	fee := sumInputs - sumOutputs
 	return btcutil.Amount(fee), nil
+}
+
+// ////////////////////////////////////////
+// ////////// PSBTv2 accessors ////////////
+// ////////////////////////////////////////
+// Following functions will handle internal
+// error-returning accessors for critical paths
+// such as signing/finalizing/extracting/fee fetch
+//
+// Should prevent silently treating missing
+// v2 fields as zeroes
+//
+// TL;DR: Handlers for both versions
+// ...... to make things less retarded
+// ////////////////////////////////////////
+
+// inputPrevOutpoint returns the prevout for the input i
+// For PSBTv2, returns error if required fields are missing
+func (p *Packet) inputPrevOutpount(i int) (wire.OutPoint, error) {
+	if p.Version == 0 {
+		return p.UnsignedTx.TxIn[i].PreviousOutPoint, nil
+	}
+
+	in := p.Inputs[i]
+
+	if in.PreviousTxID == nil || in.OutputIndex == nil {
+		return wire.OutPoint{}, ErrInvalidPsbtFormat
+	}
+
+	return wire.OutPoint{Hash: *in.PreviousTxID, Index: *in.OutputIndex}, nil
+}
+
+// Returns the sequence number for input i
+// For PSBTv2, returns wire.MaxTxInSequenceNum if Sequence is not set
+func (p *Packet) inputSequence(i int) uint32 {
+	if p.Version == 0 {
+		return p.UnsignedTx.TxIn[i].Sequence
+	}
+	if p.Inputs[i].Sequence != nil {
+		return *p.Inputs[i].Sequence
+	}
+	return wire.MaxTxInSequenceNum
+}
+
+// Returns the amount for input i
+// For PSBTv2, returns InvalidPSBT if the amount is missing
+func (p *Packet) outputAmount(i int) (int64, error) {
+	if p.Version == 0 {
+		return p.UnsignedTx.TxOut[i].Value, nil
+	}
+	if p.Outputs[i].Amount == nil {
+		return 0, ErrInvalidPsbtFormat
+	}
+	return *p.Outputs[i].Amount, nil
+}
+
+// Returns the pkScript for output i
+// For PSBTv2, returns InvalidPSBT if the Script is missing
+func (p *Packet) outputScript(i int) ([]byte, error) {
+	if p.Version == 0 {
+		return p.UnsignedTx.TxOut[i].PkScript, nil
+	}
+	if p.Outputs[i].Script == nil {
+		return nil, ErrInvalidPsbtFormat
+	}
+	return p.Outputs[i].Script, nil
+}
+
+// ComputedLockTime returns the transaction locktime.
+// For v0, this is the nLockTime in the unsigned transaction.
+// For v2, this follows BIP370's locktime algorithm.
+func (p *Packet) ComputedLockTime() (uint32, error) {
+	if p.Version != 2 {
+		if p.UnsignedTx == nil {
+			return 0, ErrInvalidPsbtFormat
+		}
+
+		return p.UnsignedTx.LockTime, nil
+	}
+
+	// (TODO): I had a thought about here but forgot
+	// 		 : Check carefully
+	var (
+		hasAnyLocktime bool
+		heightPossible = true
+		timePossible   = true
+		maxHeight      uint32
+		maxTime        uint32
+	)
+
+	for _, in := range p.Inputs {
+		hasHeight := in.RequiredHeightLocktime != nil
+		hasTime := in.RequiredTimeLocktime != nil
+
+		if !hasHeight && !hasTime {
+			continue
+		}
+
+		hasAnyLocktime = true
+
+		switch {
+		case hasHeight && hasTime:
+			if *in.RequiredHeightLocktime > maxHeight {
+				maxHeight = *in.RequiredHeightLocktime
+			}
+			if *in.RequiredTimeLocktime > maxTime {
+				maxTime = *in.RequiredTimeLocktime
+			}
+
+		case hasHeight:
+			timePossible = false
+			if *in.RequiredHeightLocktime > maxHeight {
+				maxHeight = *in.RequiredHeightLocktime
+			}
+
+		case hasTime:
+			heightPossible = false
+			if *in.RequiredTimeLocktime > maxTime {
+				maxTime = *in.RequiredTimeLocktime
+			}
+		}
+	}
+
+	if !hasAnyLocktime {
+		if p.FallbackLocktime != nil {
+			return *p.FallbackLocktime, nil
+		}
+
+		return 0, nil
+	}
+
+	if heightPossible {
+		return maxHeight, nil
+	}
+	if timePossible {
+		return maxTime, nil
+	}
+
+	return 0, ErrInvalidPsbtFormat
+}
+
+// GetTxVersion returns the transaction version for both PSBTv0 and PSBTv2.
+func (p *Packet) GetTxVersion() int32 {
+	if p.Version == 2 {
+		return p.TxVersion
+	}
+	if p.UnsignedTx == nil {
+		return 0
+	}
+
+	return p.UnsignedTx.Version
 }

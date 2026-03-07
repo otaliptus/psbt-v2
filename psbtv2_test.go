@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/btcsuite/btcd/wire"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,7 +15,8 @@ import (
 //
 // These tests mirror the BIP370 rust vectors at the level currently supported
 // by this codebase: input/output map parsing of v2 keys.
-// They're LLM generated and then hand-checked. I believe they're good enough :)
+// They're mostly **LLM generated** and then hand-checked.
+// I believe they're good enough :)
 //
 // SOURCE: https://github.com/rust-bitcoin/rust-psbt/blob/efb1e8fc1bf000c810fc012cc237f67aceef1d9e/tests/bip370-parse-valid.rs
 //
@@ -196,6 +198,186 @@ func TestPSBTV2DuplicateKnownFieldsRejected(t *testing.T) {
 	})
 }
 
+// TestPacketGetTxVersion verifies the version accessor hides the v0/v2 split.
+func TestPacketGetTxVersion(t *testing.T) {
+	t.Run("v0_reads_unsigned_tx_version", func(t *testing.T) {
+		packet := &Packet{
+			UnsignedTx: wire.NewMsgTx(3),
+		}
+
+		require.EqualValues(t, 3, packet.GetTxVersion())
+	})
+
+	t.Run("v2_reads_global_tx_version", func(t *testing.T) {
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 4,
+		}
+
+		require.EqualValues(t, 4, packet.GetTxVersion())
+	})
+}
+
+// TestPacketComputedLockTimeV0 verifies the legacy passthrough behavior.
+func TestPacketComputedLockTimeV0(t *testing.T) {
+	packet := &Packet{
+		UnsignedTx: &wire.MsgTx{LockTime: 12345},
+	}
+
+	locktime, err := packet.ComputedLockTime()
+	require.NoError(t, err)
+	require.EqualValues(t, 12345, locktime)
+}
+
+// SOURCE:
+// https://github.com/rust-bitcoin/rust-psbt/blob/efb1e8fc1bf000c810fc012cc237f67aceef1d9e/tests/bip370-determine-lock-time.rs
+//
+// TestPSBTV2MirroredComputedLockTime mirrors the BIP370 locktime determination
+// cases from rust-psbt at the Packet helper level currently supported here.
+func TestPSBTV2MirroredComputedLockTime(t *testing.T) {
+	tests := []struct {
+		name   string
+		packet *Packet
+		want   uint32
+	}{
+		{
+			name: "no_locktimes_specified",
+			packet: &Packet{
+				Version: 2,
+				Inputs:  []PInput{{}, {}},
+			},
+			want: 0,
+		},
+		{
+			name: "fallback_locktime_of_zero",
+			packet: &Packet{
+				Version:          2,
+				FallbackLocktime: u32Ptr(0),
+				Inputs:           []PInput{{}, {}},
+			},
+			want: 0,
+		},
+		{
+			name: "height_10000_and_other_input_without_locktime",
+			packet: &Packet{
+				Version: 2,
+				Inputs: []PInput{
+					{RequiredHeightLocktime: u32Ptr(10000)},
+					{},
+				},
+			},
+			want: 10000,
+		},
+		{
+			name: "height_10000_and_height_9000",
+			packet: &Packet{
+				Version: 2,
+				Inputs: []PInput{
+					{RequiredHeightLocktime: u32Ptr(10000)},
+					{RequiredHeightLocktime: u32Ptr(9000)},
+				},
+			},
+			want: 10000,
+		},
+		{
+			name: "height_10000_and_other_input_with_height_9000_and_time_1657048460",
+			packet: &Packet{
+				Version: 2,
+				Inputs: []PInput{
+					{RequiredHeightLocktime: u32Ptr(10000)},
+					{
+						RequiredHeightLocktime: u32Ptr(9000),
+						RequiredTimeLocktime:   u32Ptr(1657048460),
+					},
+				},
+			},
+			want: 10000,
+		},
+		{
+			name: "both_inputs_support_both_and_height_wins_tie",
+			packet: &Packet{
+				Version: 2,
+				Inputs: []PInput{
+					{
+						RequiredHeightLocktime: u32Ptr(10000),
+						RequiredTimeLocktime:   u32Ptr(1657048459),
+					},
+					{
+						RequiredHeightLocktime: u32Ptr(9000),
+						RequiredTimeLocktime:   u32Ptr(1657048460),
+					},
+				},
+			},
+			want: 10000,
+		},
+		{
+			name: "time_1657048459_and_other_input_with_height_9000_and_time_1657048460",
+			packet: &Packet{
+				Version: 2,
+				Inputs: []PInput{
+					{RequiredTimeLocktime: u32Ptr(1657048459)},
+					{
+						RequiredHeightLocktime: u32Ptr(9000),
+						RequiredTimeLocktime:   u32Ptr(1657048460),
+					},
+				},
+			},
+			want: 1657048460,
+		},
+		{
+			name: "height_10000_and_time_1657048459_then_other_input_time_1657048460",
+			packet: &Packet{
+				Version: 2,
+				Inputs: []PInput{
+					{
+						RequiredHeightLocktime: u32Ptr(10000),
+						RequiredTimeLocktime:   u32Ptr(1657048459),
+					},
+					{RequiredTimeLocktime: u32Ptr(1657048460)},
+				},
+			},
+			want: 1657048460,
+		},
+		{
+			name: "other_input_without_locktimes_then_time_1657048460",
+			packet: &Packet{
+				Version: 2,
+				Inputs: []PInput{
+					{},
+					{RequiredTimeLocktime: u32Ptr(1657048460)},
+				},
+			},
+			want: 1657048460,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			locktime, err := test.packet.ComputedLockTime()
+			require.NoError(t, err)
+			require.EqualValues(t, test.want, locktime)
+		})
+	}
+}
+
+// SOURCE:
+// https://github.com/rust-bitcoin/rust-psbt/blob/efb1e8fc1bf000c810fc012cc237f67aceef1d9e/tests/bip370-determine-lock-time.rs
+//
+// TestPSBTV2MirroredComputedLockTimeIndeterminate mirrors the incompatible
+// locktime-type case from rust-psbt.
+func TestPSBTV2MirroredComputedLockTimeIndeterminate(t *testing.T) {
+	packet := &Packet{
+		Version: 2,
+		Inputs: []PInput{
+			{RequiredHeightLocktime: u32Ptr(10000)},
+			{RequiredTimeLocktime: u32Ptr(1657048460)},
+		},
+	}
+
+	_, err := packet.ComputedLockTime()
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
 // /////////////////////////////////////////////////////////////////////////////
 
 func putKV(t *testing.T, w *bytes.Buffer, kt uint8, keyData, value []byte) {
@@ -218,6 +400,11 @@ func u64LE(v uint64) []byte {
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], v)
 	return b[:]
+}
+
+// Go moment (or I don't understand this lang well still...)
+func u32Ptr(v uint32) *uint32 {
+	return &v
 }
 
 func hasSingletonGlobalUnknown(unknowns []*Unknown, t GlobalType) bool {
