@@ -578,46 +578,181 @@ func TestSerializeV0RejectsV2InputOutputFields(t *testing.T) {
 	})
 }
 
-// TestBIP370Base64VectorSubset runs a small set of literal BIP370 base64
-// vectors to anchor parser behavior against the published fixtures.
-//
-// Source:
-// https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#test-vectors
-func TestBIP370Base64VectorSubset(t *testing.T) {
-	t.Run("invalid_v0_with_psbt_in_previous_txid", func(t *testing.T) {
-		// Case: PSBTv0 but with PSBT_IN_PREVIOUS_TXID.
-		const vector = "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gAIgIC1gH4SEamdV93a+AOPZ3o+xCsyTX7g8RfsBYtTK1at5IY9p2HPlQAAIABAACAAAAAgAAAAAAqAAAAACICA27+LCVWIZhlU7qdZcPdxkFlyhQ24FqjWkxusCRRz3ltGPadhz5UAACAAQAAgAAAAIABAAAAYgAAAAA="
+// //////////////////////////////////////////////////////////////////////////
+// BIP-370 official test vectors
+// Source: https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#test-vectors
+// //////////////////////////////////////////////////////////////////////////
 
+// TestBIP370InvalidV0WithV2Fields tests all 13 cases where a v0 PSBT
+// contains fields that are only valid in v2.
+func TestBIP370InvalidV0WithV2Fields(t *testing.T) {
+	vectors := []struct {
+		name   string
+		vector string
+	}{
+		{"v0_with_global_version_2", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAECBAIAAAAAAQBSAgAAAAHBqiVuIUuWoYIvk95Cv/O18/+NBRkwbjUV11FaXoBbEgAAAAAA/////wEYxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAAAAAAEBHxjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4BCGsCRzBEAiAFJ1pIVzTgrh87lxI3WG8OctyFgz0njA5HTNIxEsD6XgIgawSMg868PEHQuTzH2nYYXO29Aw0AWwgBi+K5i7rL33sBIQN2DcygXzmX3GWykwYPfynxUUyMUnBI4SgCsEHU/DQKJwAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_tx_version", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAECBAIAAAAAAQBSAgAAAAHBqiVuIUuWoYIvk95Cv/O18/+NBRkwbjUV11FaXoBbEgAAAAAA/////wEYxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAAAAAAEBHxjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4BCGsCRzBEAiAFJ1pIVzTgrh87lxI3WG8OctyFgz0njA5HTNIxEsD6XgIgawSMg868PEHQuTzH2nYYXO29Aw0AWwgBi+K5i7rL33sBIQN2DcygXzmX3GWykwYPfynxUUyMUnBI4SgCsEHU/DQKJwAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_fallback_locktime", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAEDBAIAAAAAAQBSAgAAAAHBqiVuIUuWoYIvk95Cv/O18/+NBRkwbjUV11FaXoBbEgAAAAAA/////wEYxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAAAAAAEBHxjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4BCGsCRzBEAiAFJ1pIVzTgrh87lxI3WG8OctyFgz0njA5HTNIxEsD6XgIgawSMg868PEHQuTzH2nYYXO29Aw0AWwgBi+K5i7rL33sBIQN2DcygXzmX3GWykwYPfynxUUyMUnBI4SgCsEHU/DQKJwAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_input_count", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAEEAQIAAQBSAgAAAAHBqiVuIUuWoYIvk95Cv/O18/+NBRkwbjUV11FaXoBbEgAAAAAA/////wEYxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAAAAAAEBHxjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4BCGsCRzBEAiAFJ1pIVzTgrh87lxI3WG8OctyFgz0njA5HTNIxEsD6XgIgawSMg868PEHQuTzH2nYYXO29Aw0AWwgBi+K5i7rL33sBIQN2DcygXzmX3GWykwYPfynxUUyMUnBI4SgCsEHU/DQKJwAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_output_count", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAEFAQIAAQBSAgAAAAHBqiVuIUuWoYIvk95Cv/O18/+NBRkwbjUV11FaXoBbEgAAAAAA/////wEYxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAAAAAAEBHxjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4BCGsCRzBEAiAFJ1pIVzTgrh87lxI3WG8OctyFgz0njA5HTNIxEsD6XgIgawSMg868PEHQuTzH2nYYXO29Aw0AWwgBi+K5i7rL33sBIQN2DcygXzmX3GWykwYPfynxUUyMUnBI4SgCsEHU/DQKJwAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_tx_modifiable", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAEGAQAAAQBSAgAAAAHBqiVuIUuWoYIvk95Cv/O18/+NBRkwbjUV11FaXoBbEgAAAAAA/////wEYxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAAAAAAEBHxjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4BCGsCRzBEAiAFJ1pIVzTgrh87lxI3WG8OctyFgz0njA5HTNIxEsD6XgIgawSMg868PEHQuTzH2nYYXO29Aw0AWwgBi+K5i7rL33sBIQN2DcygXzmX3GWykwYPfynxUUyMUnBI4SgCsEHU/DQKJwAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_previous_txid", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gAIgIC1gH4SEamdV93a+AOPZ3o+xCsyTX7g8RfsBYtTK1at5IY9p2HPlQAAIABAACAAAAAgAAAAAAqAAAAACICA27+LCVWIZhlU7qdZcPdxkFlyhQ24FqjWkxusCRRz3ltGPadhz5UAACAAQAAgAAAAIABAAAAYgAAAAA="},
+		{"v0_with_output_index", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_sequence", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonARAE/////wAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_required_time_locktime", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonAREEjI3EYgAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_required_height_locktime", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonARIEECcAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAAAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+		{"v0_with_out_amount", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonACICAtYB+EhGpnVfd2vgDj2d6PsQrMk1+4PEX7AWLUytWreSGPadhz5UAACAAQAAgAAAAIAAAAAAKgAAAAEDCAAIry8AAAAAACICA27+LCVWIZhlU7qdZcPdxkFlyhQ24FqjWkxusCRRz3ltGPadhz5UAACAAQAAgAAAAIABAAAAYgAAAAA="},
+		{"v0_with_out_script", "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonACICAtYB+EhGpnVfd2vgDj2d6PsQrMk1+4PEX7AWLUytWreSGPadhz5UAACAAQAAgAAAAIAAAAAAKgAAAAEEFgAUoH2sirbKlC03nteV+DW6ccnMaIUAIgIDbv4sJVYhmGVTup1lw93GQWXKFDbgWqNaTG6wJFHPeW0Y9p2HPlQAAIABAACAAAAAgAEAAABiAAAAAA=="},
+	}
+
+	for _, v := range vectors {
+		t.Run(v.name, func(t *testing.T) {
+			_, err := NewFromRawBytes(strings.NewReader(v.vector), true)
+			require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+		})
+	}
+}
+
+// TestBIP370InvalidV2MissingRequired tests v2 packets that are missing
+// required global or per-input/per-output fields.
+func TestBIP370InvalidV2MissingRequired(t *testing.T) {
+	vectors := []struct {
+		name   string
+		vector string
+	}{
+		{"missing_input_count", "cHNidP8BAgQCAAAAAQMEAAAAAAEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAARAE/v///wAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="},
+		{"missing_output_count", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQEB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAARAE/v///wAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="},
+		{"missing_previous_txid", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQEBBQECAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEPBAAAAAABEAT+////ACICAtYB+EhGpnVfd2vgDj2d6PsQrMk1+4PEX7AWLUytWreSGPadhz5UAACAAQAAgAAAAIAAAAAAKgAAAAEDCAAIry8AAAAAAQQWABTEMPZMR1baMQ29GghVcu8pmSYnLAAiAgLjb7/1PdU0Bwz4/TlmFGgPNXqbhdtzQL8c+nRdKtezQBj2nYc+VAAAgAEAAIAAAACAAQAAAGQAAAABAwiLvesLAAAAAAEEFgAUTdGTrJZKVqwbnhzKhFT+L0dPhRMA"},
+		{"missing_output_index", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQEBBQECAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IARAE/v///wAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="},
+		{"missing_out_amount", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQEBBQECAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAEQBP7///8AIgIC1gH4SEamdV93a+AOPZ3o+xCsyTX7g8RfsBYtTK1at5IY9p2HPlQAAIABAACAAAAAgAAAAAAqAAAAAQQWABTEMPZMR1baMQ29GghVcu8pmSYnLAAiAgLjb7/1PdU0Bwz4/TlmFGgPNXqbhdtzQL8c+nRdKtezQBj2nYc+VAAAgAEAAIAAAACAAQAAAGQAAAABAwiLvesLAAAAAAEEFgAUTdGTrJZKVqwbnhzKhFT+L0dPhRMA"},
+		{"missing_out_script", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQEBBQECAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAEQBP7///8AIgIC1gH4SEamdV93a+AOPZ3o+xCsyTX7g8RfsBYtTK1at5IY9p2HPlQAAIABAACAAAAAgAAAAAAqAAAAAQMIAAivLwAAAAAAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="},
+	}
+
+	for _, v := range vectors {
+		t.Run(v.name, func(t *testing.T) {
+			_, err := NewFromRawBytes(strings.NewReader(v.vector), true)
+			require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+		})
+	}
+}
+
+// TestBIP370InvalidV2LocktimeBoundary tests locktime boundary violations.
+func TestBIP370InvalidV2LocktimeBoundary(t *testing.T) {
+	vectors := []struct {
+		name   string
+		vector string
+	}{
+		{"time_locktime_below_threshold", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAAREE/2TNHQAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="},
+		{"height_locktime_at_threshold", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAARIEAGXNHQAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="},
+	}
+
+	for _, v := range vectors {
+		t.Run(v.name, func(t *testing.T) {
+			_, err := NewFromRawBytes(strings.NewReader(v.vector), true)
+			require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+		})
+	}
+}
+
+// TestBIP370ValidV2 tests all valid v2 vectors from the BIP-370 spec.
+func TestBIP370ValidV2(t *testing.T) {
+	vectors := []struct {
+		name           string
+		vector         string
+		numInputs      int
+		numOutputs     int
+		txModifiable   *uint8 // nil means field absent
+	}{
+		{"required_fields_only", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, nil},
+		{"updated", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAACICAtYB+EhGpnVfd2vgDj2d6PsQrMk1+4PEX7AWLUytWreSGPadhz5UAACAAQAAgAAAAIAAAAAAKgAAAAEDCAAIry8AAAAAAQQWABTEMPZMR1baMQ29GghVcu8pmSYnLAAiAgLjb7/1PdU0Bwz4/TlmFGgPNXqbhdtzQL8c+nRdKtezQBj2nYc+VAAAgAEAAIAAAACAAQAAAGQAAAABAwiLvesLAAAAAAEEFgAUTdGTrJZKVqwbnhzKhFT+L0dPhRMA", 1, 2, nil},
+		{"with_sequence", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAARAE/v///wAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, nil},
+		{"all_locktime_fields", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQEBBQECAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAEQBP7///8BEQSMjcRiARIEECcAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, nil},
+		{"inputs_modifiable", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgEBAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x01)},
+		{"outputs_modifiable", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgECAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x02)},
+		{"sighash_single_flag", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgEEAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x04)},
+		{"undefined_flag_bit3", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgEIAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x08)},
+		{"inputs_and_outputs_modifiable", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgEDAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x03)},
+		{"inputs_and_sighash_single", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgEFAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x05)},
+		{"outputs_and_sighash_single", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgEGAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x06)},
+		{"all_defined_flags", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgEHAfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0x07)},
+		{"all_flags_0xff", "cHNidP8BAgQCAAAAAQQBAQEFAQIBBgH/AfsEAgAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, ptrU8(0xff)},
+		{"all_v2_fields", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQEBBQECAQYBBwH7BAIAAAAAAQBSAgAAAAHBqiVuIUuWoYIvk95Cv/O18/+NBRkwbjUV11FaXoBbEgAAAAAA/////wEYxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAAAAAAEBHxjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4BDiALCtkhQZwchxlzXXLcc5+eqeBjjR/kwe7w+ZRAhIFfyAEPBAAAAAABEAT+////AREEjI3EYgESBBAnAAAAIgIC1gH4SEamdV93a+AOPZ3o+xCsyTX7g8RfsBYtTK1at5IY9p2HPlQAAIABAACAAAAAgAAAAAAqAAAAAQMIAAivLwAAAAABBBYAFMQw9kxHVtoxDb0aCFVy7ymZJicsACICAuNvv/U91TQHDPj9OWYUaA81epuF23NAvxz6dF0q17NAGPadhz5UAACAAQAAgAAAAIABAAAAZAAAAAEDCIu96wsAAAAAAQQWABRN0ZOslkpWrBueHMqEVP4vR0+FEwA=", 1, 2, ptrU8(0x07)},
+	}
+
+	for _, v := range vectors {
+		t.Run(v.name, func(t *testing.T) {
+			p, err := NewFromRawBytes(strings.NewReader(v.vector), true)
+			require.NoError(t, err)
+			require.EqualValues(t, 2, p.Version)
+			require.Nil(t, p.UnsignedTx)
+			require.Len(t, p.Inputs, v.numInputs)
+			require.Len(t, p.Outputs, v.numOutputs)
+
+			// Verify TxModifiable byte preservation.
+			if v.txModifiable == nil {
+				require.Nil(t, p.TxModifiable,
+					"expected TxModifiable to be nil")
+			} else {
+				require.NotNil(t, p.TxModifiable,
+					"expected TxModifiable to be set")
+				require.Equal(t, *v.txModifiable, *p.TxModifiable,
+					"TxModifiable byte mismatch")
+			}
+
+			// Roundtrip: serialize → re-parse → compare TxModifiable.
+			var buf bytes.Buffer
+			require.NoError(t, p.Serialize(&buf))
+			p2, err := NewFromRawBytes(&buf, false)
+			require.NoError(t, err)
+			if v.txModifiable == nil {
+				require.Nil(t, p2.TxModifiable)
+			} else {
+				require.NotNil(t, p2.TxModifiable)
+				require.Equal(t, *v.txModifiable, *p2.TxModifiable,
+					"TxModifiable not preserved after roundtrip")
+			}
+		})
+	}
+}
+
+// TestBIP370LocktimeDetermination tests the locktime computation algorithm
+// using official BIP-370 base64 vectors.
+func TestBIP370LocktimeDetermination(t *testing.T) {
+	validVectors := []struct {
+		name     string
+		vector   string
+		locktime uint32
+	}{
+		{"no_locktimes", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 0},
+		{"fallback_locktime_zero", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAAAAQ4gOhs7PIN9ZInqejHY5sfdUDwAG+8+BpWOdXSAjWjKeKUBDwQAAAAAAAEDCE+TNXcAAAAAAQQWABQLE1LKzQPPaqG388jWOIZxs0peEQA=", 0},
+		{"height_10000_other_none", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAABEgQQJwAAAAEOIDobOzyDfWSJ6nox2ObH3VA8ABvvPgaVjnV0gI1oynilAQ8EAAAAAAABAwhPkzV3AAAAAAEEFgAUCxNSys0Dz2qht/PI1jiGcbNKXhEA", 10000},
+		{"height_10000_vs_9000", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAABEgQQJwAAAAEOIDobOzyDfWSJ6nox2ObH3VA8ABvvPgaVjnV0gI1oynilAQ8EAAAAAAESBCgjAAAAAQMIT5M1dwAAAAABBBYAFAsTUsrNA89qobfzyNY4hnGzSl4RAA==", 10000},
+		{"height_10000_vs_height_9000_time_1657048460", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAABEgQQJwAAAAEOIDobOzyDfWSJ6nox2ObH3VA8ABvvPgaVjnV0gI1oynilAQ8EAAAAAAERBIyNxGIBEgQoIwAAAAEDCE+TNXcAAAAAAQQWABQLE1LKzQPPaqG388jWOIZxs0peEQA=", 10000},
+		{"both_have_both_height_wins", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAABEQSLjcRiARIEECcAAAABDiA6Gzs8g31kiep6Mdjmx91QPAAb7z4GlY51dICNaMp4pQEPBAAAAAABEQSMjcRiARIEKCMAAAABAwhPkzV3AAAAAAEEFgAUCxNSys0Dz2qht/PI1jiGcbNKXhEA", 10000},
+		{"time_only_vs_height_and_time", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAABEQSLjcRiAAEOIDobOzyDfWSJ6nox2ObH3VA8ABvvPgaVjnV0gI1oynilAQ8EAAAAAAERBIyNxGIBEgQoIwAAAAEDCE+TNXcAAAAAAQQWABQLE1LKzQPPaqG388jWOIZxs0peEQA=", 1657048460},
+		{"height_and_time_vs_time_only", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAABEQSLjcRiARIEECcAAAABDiA6Gzs8g31kiep6Mdjmx91QPAAb7z4GlY51dICNaMp4pQEPBAAAAAABEQSMjcRiAAEDCE+TNXcAAAAAAQQWABQLE1LKzQPPaqG388jWOIZxs0peEQA=", 1657048460},
+		{"both_time_only", "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAAAAQ4gOhs7PIN9ZInqejHY5sfdUDwAG+8+BpWOdXSAjWjKeKUBDwQAAAAAAREEjI3EYgABAwhPkzV3AAAAAAEEFgAUCxNSys0Dz2qht/PI1jiGcbNKXhEA", 1657048460},
+	}
+
+	for _, v := range validVectors {
+		t.Run(v.name, func(t *testing.T) {
+			p, err := NewFromRawBytes(strings.NewReader(v.vector), true)
+			require.NoError(t, err)
+
+			locktime, err := p.ComputedLockTime()
+			require.NoError(t, err)
+			require.EqualValues(t, v.locktime, locktime)
+		})
+	}
+
+	// The indeterminate case: height-only vs time-only.
+	t.Run("indeterminate_height_vs_time", func(t *testing.T) {
+		const vector = "cHNidP8BAgQCAAAAAQMEAAAAAAEEAQIBBQEBAfsEAgAAAAABDiAPdY2/vU2nwWyKMwnDyB4RAPVh6mRttbAXUsSF4b3enwEPBAEAAAABEgQQJwAAAAEOIDobOzyDfWSJ6nox2ObH3VA8ABvvPgaVjnV0gI1oynilAQ8EAAAAAAERBIyNxGIAAQMIT5M1dwAAAAABBBYAFAsTUsrNA89qobfzyNY4hnGzSl4RAA=="
+
+		// This vector should fail to parse because SanityCheck calls
+		// ComputedLockTime which returns an error for incompatible types.
 		_, err := NewFromRawBytes(strings.NewReader(vector), true)
 		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
-	})
-
-	t.Run("invalid_v2_missing_input_count", func(t *testing.T) {
-		// Case: PSBTv2 missing PSBT_GLOBAL_INPUT_COUNT.
-		const vector = "cHNidP8BAgQCAAAAAQMEAAAAAAEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAARAE/v///wAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="
-
-		_, err := NewFromRawBytes(strings.NewReader(vector), true)
-		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
-	})
-
-	t.Run("invalid_v2_required_time_locktime_below_threshold", func(t *testing.T) {
-		// Case: PSBTv2 with PSBT_IN_REQUIRED_TIME_LOCKTIME less than 500000000.
-		const vector = "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAAREE/2TNHQAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="
-
-		_, err := NewFromRawBytes(strings.NewReader(vector), true)
-		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
-	})
-
-	t.Run("valid_v2_required_fields_only", func(t *testing.T) {
-		// Case: 1 input, 2 output PSBTv2, required fields only.
-		const vector = "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="
-
-		p, err := NewFromRawBytes(strings.NewReader(vector), true)
-		require.NoError(t, err)
-		require.EqualValues(t, 2, p.Version)
-		require.Nil(t, p.UnsignedTx)
-		require.Len(t, p.Inputs, 1)
-		require.Len(t, p.Outputs, 2)
 	})
 }
 
@@ -1108,6 +1243,546 @@ func TestBuildUnsignedTxV2(t *testing.T) {
 	})
 }
 
+// //////////////////////////////////////////////////////////////////////////
+// PSBTv2 - Creator & Constructor tests
+// //////////////////////////////////////////////////////////////////////////
+
+// TestNewV2CreatesRequiredFields verifies that NewV2 populates v2-required
+// per-input and per-output fields and passes SanityCheck.
+func TestNewV2CreatesRequiredFields(t *testing.T) {
+	inputs := []wire.OutPoint{
+		{Hash: *hashPtr(0xaa), Index: 0},
+		{Hash: *hashPtr(0xbb), Index: 3},
+	}
+	outputs := []*wire.TxOut{
+		{Value: 5000, PkScript: []byte{0x00, 0x14, 0x01}},
+		{Value: 3000, PkScript: []byte{0x51}},
+	}
+
+	pkt, err := NewV2(2, inputs, outputs, nil, nil)
+	require.NoError(t, err)
+
+	// Packet-level fields.
+	require.EqualValues(t, 2, pkt.Version)
+	require.Nil(t, pkt.UnsignedTx)
+	require.EqualValues(t, 2, pkt.TxVersion)
+	require.Nil(t, pkt.FallbackLocktime)
+	require.Nil(t, pkt.TxModifiable)
+
+	// Per-input fields.
+	require.Len(t, pkt.Inputs, 2)
+	require.Equal(t, hashPtr(0xaa), pkt.Inputs[0].PreviousTxID)
+	require.EqualValues(t, 0, *pkt.Inputs[0].OutputIndex)
+	require.Equal(t, hashPtr(0xbb), pkt.Inputs[1].PreviousTxID)
+	require.EqualValues(t, 3, *pkt.Inputs[1].OutputIndex)
+
+	// Per-output fields.
+	require.Len(t, pkt.Outputs, 2)
+	require.EqualValues(t, 5000, *pkt.Outputs[0].Amount)
+	require.Equal(t, []byte{0x00, 0x14, 0x01}, pkt.Outputs[0].Script)
+	require.EqualValues(t, 3000, *pkt.Outputs[1].Amount)
+	require.Equal(t, []byte{0x51}, pkt.Outputs[1].Script)
+
+	// Must pass its own SanityCheck.
+	require.NoError(t, pkt.SanityCheck())
+}
+
+// TestNewV2WithOptionalFields verifies fallbackLocktime and txModifiable
+// are properly set when provided.
+func TestNewV2WithOptionalFields(t *testing.T) {
+	fl := uint32(800_000)
+	mod := uint8(0x03) // inputs + outputs modifiable
+
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1000, PkScript: []byte{0x51}}},
+		&fl, &mod,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, pkt.FallbackLocktime)
+	require.EqualValues(t, 800_000, *pkt.FallbackLocktime)
+	require.NotNil(t, pkt.TxModifiable)
+	require.EqualValues(t, 0x03, *pkt.TxModifiable)
+}
+
+// TestNewV2RejectsInvalidTxVersion ensures bad transaction versions fail.
+func TestNewV2RejectsInvalidTxVersion(t *testing.T) {
+	_, err := NewV2(
+		0, // below MinTxVersion
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+		nil, nil,
+	)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestNewV2SerializeRoundTrip verifies a created v2 packet survives
+// serialization and re-parsing.
+func TestNewV2SerializeRoundTrip(t *testing.T) {
+	fl := uint32(500)
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{
+			{Hash: *hashPtr(0xaa), Index: 0},
+		},
+		[]*wire.TxOut{
+			{Value: 9000, PkScript: []byte{0x00, 0x14, 0x02}},
+		},
+		&fl, nil,
+	)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	require.NoError(t, pkt.Serialize(&buf))
+
+	parsed, err := NewFromRawBytes(bytes.NewReader(buf.Bytes()), false)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, parsed.Version)
+	require.EqualValues(t, 2, parsed.TxVersion)
+	require.NotNil(t, parsed.FallbackLocktime)
+	require.EqualValues(t, 500, *parsed.FallbackLocktime)
+	require.Len(t, parsed.Inputs, 1)
+	require.Len(t, parsed.Outputs, 1)
+	require.Equal(t, hashPtr(0xaa), parsed.Inputs[0].PreviousTxID)
+	require.EqualValues(t, 0, *parsed.Inputs[0].OutputIndex)
+	require.EqualValues(t, 9000, *parsed.Outputs[0].Amount)
+	require.Equal(t, []byte{0x00, 0x14, 0x02}, parsed.Outputs[0].Script)
+}
+
+// TestNewV2DoesNotAlias ensures NewV2 copies input data so the caller
+// can't mutate the packet through the original slices.
+func TestNewV2DoesNotAlias(t *testing.T) {
+	script := []byte{0x51, 0x52}
+	outputs := []*wire.TxOut{{Value: 100, PkScript: script}}
+
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		outputs, nil, nil,
+	)
+	require.NoError(t, err)
+
+	// Mutate the original — packet should be unaffected.
+	script[0] = 0xff
+	require.EqualValues(t, 0x51, pkt.Outputs[0].Script[0])
+}
+
+// TestConstructorRejectsV0 ensures NewConstructor only accepts v2 packets.
+func TestConstructorRejectsV0(t *testing.T) {
+	pkt := &Packet{
+		Version:    0,
+		UnsignedTx: &wire.MsgTx{},
+	}
+
+	_, err := NewConstructor(pkt)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestConstructorAddInputOutput verifies inputs/outputs can be added when
+// the corresponding TxModifiable bits are set.
+func TestConstructorAddInputOutput(t *testing.T) {
+	mod := uint8(0x03) // both modifiable
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1000, PkScript: []byte{0x51}}},
+		nil, &mod,
+	)
+	require.NoError(t, err)
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	// Add an input.
+	require.NoError(t, c.AddInput(*hashPtr(0x22), 1))
+	require.Len(t, pkt.Inputs, 2)
+	require.Equal(t, hashPtr(0x22), pkt.Inputs[1].PreviousTxID)
+	require.EqualValues(t, 1, *pkt.Inputs[1].OutputIndex)
+
+	// Add an output.
+	require.NoError(t, c.AddOutput(2000, []byte{0x00, 0x14, 0x03}))
+	require.Len(t, pkt.Outputs, 2)
+	require.EqualValues(t, 2000, *pkt.Outputs[1].Amount)
+	require.Equal(t, []byte{0x00, 0x14, 0x03}, pkt.Outputs[1].Script)
+}
+
+// TestConstructorRejectsWhenNotModifiable verifies that add/remove operations
+// fail when TxModifiable is nil or the relevant bit is cleared.
+func TestConstructorRejectsWhenNotModifiable(t *testing.T) {
+	t.Run("nil_tx_modifiable", func(t *testing.T) {
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{{
+				PreviousTxID: hashPtr(0x11),
+				OutputIndex:  u32Ptr(0),
+			}},
+			Outputs: []POutput{{
+				Amount: func() *int64 { a := int64(1); return &a }(),
+				Script: []byte{0x51},
+			}},
+		}
+
+		c, err := NewConstructor(pkt)
+		require.NoError(t, err)
+
+		require.ErrorIs(t, c.AddInput(*hashPtr(0x22), 0), ErrInputsNotModifiable)
+		require.ErrorIs(t, c.AddOutput(1, []byte{0x51}), ErrOutputsNotModifiable)
+		require.ErrorIs(t, c.RemoveInput(0), ErrInputsNotModifiable)
+		require.ErrorIs(t, c.RemoveOutput(0), ErrOutputsNotModifiable)
+	})
+
+	t.Run("inputs_only_modifiable", func(t *testing.T) {
+		mod := uint8(0x01) // only inputs
+		pkt := &Packet{
+			Version:      2,
+			TxVersion:    2,
+			TxModifiable: &mod,
+			Inputs: []PInput{{
+				PreviousTxID: hashPtr(0x11),
+				OutputIndex:  u32Ptr(0),
+			}},
+			Outputs: []POutput{{
+				Amount: func() *int64 { a := int64(1); return &a }(),
+				Script: []byte{0x51},
+			}},
+		}
+
+		c, err := NewConstructor(pkt)
+		require.NoError(t, err)
+
+		require.NoError(t, c.AddInput(*hashPtr(0x33), 0))
+		require.ErrorIs(t, c.AddOutput(1, []byte{0x51}), ErrOutputsNotModifiable)
+	})
+
+	t.Run("outputs_only_modifiable", func(t *testing.T) {
+		mod := uint8(0x02) // only outputs
+		pkt := &Packet{
+			Version:      2,
+			TxVersion:    2,
+			TxModifiable: &mod,
+			Inputs: []PInput{{
+				PreviousTxID: hashPtr(0x11),
+				OutputIndex:  u32Ptr(0),
+			}},
+			Outputs: []POutput{{
+				Amount: func() *int64 { a := int64(1); return &a }(),
+				Script: []byte{0x51},
+			}},
+		}
+
+		c, err := NewConstructor(pkt)
+		require.NoError(t, err)
+
+		require.ErrorIs(t, c.AddInput(*hashPtr(0x33), 0), ErrInputsNotModifiable)
+		require.NoError(t, c.AddOutput(2000, []byte{0x51}))
+	})
+}
+
+// TestConstructorRemoveInputOutput verifies removal by index.
+func TestConstructorRemoveInputOutput(t *testing.T) {
+	mod := uint8(0x03)
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{
+			{Hash: *hashPtr(0xaa), Index: 0},
+			{Hash: *hashPtr(0xbb), Index: 1},
+			{Hash: *hashPtr(0xcc), Index: 2},
+		},
+		[]*wire.TxOut{
+			{Value: 100, PkScript: []byte{0x51}},
+			{Value: 200, PkScript: []byte{0x52}},
+		},
+		nil, &mod,
+	)
+	require.NoError(t, err)
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	// Remove middle input.
+	require.NoError(t, c.RemoveInput(1))
+	require.Len(t, pkt.Inputs, 2)
+	require.Equal(t, hashPtr(0xaa), pkt.Inputs[0].PreviousTxID)
+	require.Equal(t, hashPtr(0xcc), pkt.Inputs[1].PreviousTxID)
+
+	// Remove first output.
+	require.NoError(t, c.RemoveOutput(0))
+	require.Len(t, pkt.Outputs, 1)
+	require.EqualValues(t, 200, *pkt.Outputs[0].Amount)
+
+	// Out-of-range removal.
+	require.ErrorIs(t, c.RemoveInput(5), ErrInvalidPsbtFormat)
+	require.ErrorIs(t, c.RemoveOutput(-1), ErrInvalidPsbtFormat)
+}
+
+// TestConstructorAddOutputDoesNotAlias ensures the Constructor copies
+// the script so the caller can't mutate the packet afterward.
+func TestConstructorAddOutputDoesNotAlias(t *testing.T) {
+	mod := uint8(0x02)
+	pkt := &Packet{
+		Version:      2,
+		TxVersion:    2,
+		TxModifiable: &mod,
+		Inputs: []PInput{{
+			PreviousTxID: hashPtr(0x11),
+			OutputIndex:  u32Ptr(0),
+		}},
+		Outputs: []POutput{{
+			Amount: func() *int64 { a := int64(1); return &a }(),
+			Script: []byte{0x51},
+		}},
+	}
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	script := []byte{0xaa, 0xbb}
+	require.NoError(t, c.AddOutput(500, script))
+
+	// Mutate caller's slice — packet should be unaffected.
+	script[0] = 0xff
+	require.EqualValues(t, 0xaa, pkt.Outputs[1].Script[0])
+}
+
+// TestConstructorRejectsWhenSignaturesExist verifies that mutation is blocked
+// once any input contains signature material.
+func TestConstructorRejectsWhenSignaturesExist(t *testing.T) {
+	makePacket := func(inputs []PInput) *Packet {
+		mod := uint8(0x03)
+		return &Packet{
+			Version:      2,
+			TxVersion:    2,
+			TxModifiable: &mod,
+			Inputs:       inputs,
+			Outputs: []POutput{{
+				Amount: func() *int64 { a := int64(1); return &a }(),
+				Script: []byte{0x51},
+			}},
+		}
+	}
+
+	tests := []struct {
+		name  string
+		input PInput
+	}{
+		{
+			name: "partial_sig",
+			input: PInput{
+				PreviousTxID: hashPtr(0x11),
+				OutputIndex:  u32Ptr(0),
+				PartialSigs: []*PartialSig{{
+					PubKey:    make([]byte, 33),
+					Signature: make([]byte, 64),
+				}},
+			},
+		},
+		{
+			name: "taproot_key_spend_sig",
+			input: PInput{
+				PreviousTxID:       hashPtr(0x11),
+				OutputIndex:        u32Ptr(0),
+				TaprootKeySpendSig: make([]byte, 64),
+			},
+		},
+		{
+			name: "taproot_script_spend_sig",
+			input: PInput{
+				PreviousTxID: hashPtr(0x11),
+				OutputIndex:  u32Ptr(0),
+				TaprootScriptSpendSig: []*TaprootScriptSpendSig{{
+					XOnlyPubKey: make([]byte, 32),
+					LeafHash:    make([]byte, 32),
+					Signature:   make([]byte, 64),
+				}},
+			},
+		},
+		{
+			name: "final_script_sig",
+			input: PInput{
+				PreviousTxID:   hashPtr(0x11),
+				OutputIndex:    u32Ptr(0),
+				FinalScriptSig: []byte{0x51},
+			},
+		},
+		{
+			name: "final_script_witness",
+			input: PInput{
+				PreviousTxID:       hashPtr(0x11),
+				OutputIndex:        u32Ptr(0),
+				FinalScriptWitness: []byte{0x00},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkt := makePacket([]PInput{test.input})
+			c, err := NewConstructor(pkt)
+			require.NoError(t, err)
+
+			require.ErrorIs(t,
+				c.AddInput(*hashPtr(0x22), 0),
+				ErrSignaturesExist,
+			)
+			require.ErrorIs(t,
+				c.AddOutput(1, []byte{0x51}),
+				ErrSignaturesExist,
+			)
+			require.ErrorIs(t,
+				c.RemoveInput(0),
+				ErrSignaturesExist,
+			)
+			require.ErrorIs(t,
+				c.RemoveOutput(0),
+				ErrSignaturesExist,
+			)
+		})
+	}
+}
+
+// TestConstructorAllowsMutationWithoutSignatures confirms that mutation
+// succeeds when no signature material is present (sanity counterpart).
+func TestConstructorAllowsMutationWithoutSignatures(t *testing.T) {
+	mod := uint8(0x03)
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+		nil, &mod,
+	)
+	require.NoError(t, err)
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	require.NoError(t, c.AddInput(*hashPtr(0x22), 0))
+	require.NoError(t, c.AddOutput(2, []byte{0x52}))
+}
+
+// TestConstructorRejectsSighashSingleOneSided verifies that when bit 2
+// (Has SIGHASH_SINGLE) is set, all one-sided mutations are rejected.
+func TestConstructorRejectsSighashSingleOneSided(t *testing.T) {
+	mod := uint8(0x07) // inputs + outputs + sighash_single
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+		nil, &mod,
+	)
+	require.NoError(t, err)
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	require.ErrorIs(t,
+		c.AddInput(*hashPtr(0x22), 0),
+		ErrSighashSinglePairing,
+	)
+	require.ErrorIs(t,
+		c.AddOutput(2, []byte{0x52}),
+		ErrSighashSinglePairing,
+	)
+	require.ErrorIs(t,
+		c.RemoveInput(0),
+		ErrSighashSinglePairing,
+	)
+	require.ErrorIs(t,
+		c.RemoveOutput(0),
+		ErrSighashSinglePairing,
+	)
+}
+
+// TestConstructorAllowsMutationWithoutSighashSingle confirms that mutation
+// succeeds when bit 2 is NOT set (sanity counterpart).
+func TestConstructorAllowsMutationWithoutSighashSingle(t *testing.T) {
+	mod := uint8(0x03) // inputs + outputs, no sighash_single
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+		nil, &mod,
+	)
+	require.NoError(t, err)
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	require.NoError(t, c.AddInput(*hashPtr(0x22), 0))
+	require.NoError(t, c.AddOutput(2, []byte{0x52}))
+}
+
+// TestNewConstructorNil ensures NewConstructor returns an error on nil input.
+func TestNewConstructorNil(t *testing.T) {
+	_, err := NewConstructor(nil)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestNewV2NilOutputElement ensures NewV2 returns an error when an output
+// element is nil rather than panicking.
+func TestNewV2NilOutputElement(t *testing.T) {
+	_, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{nil},
+		nil, nil,
+	)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestNewV2RejectsNegativeAmount ensures NewV2 rejects outputs with
+// negative values.
+func TestNewV2RejectsNegativeAmount(t *testing.T) {
+	_, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: -1, PkScript: []byte{0x51}}},
+		nil, nil,
+	)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestConstructorRejectsNegativeAmount ensures AddOutput rejects negative
+// amounts.
+func TestConstructorRejectsNegativeAmount(t *testing.T) {
+	mod := uint8(0x02)
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+		nil, &mod,
+	)
+	require.NoError(t, err)
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	require.ErrorIs(t, c.AddOutput(-1, []byte{0x51}), ErrInvalidPsbtFormat)
+}
+
+// TestNewV2DoesNotAliasGlobalPointers ensures caller can't mutate packet
+// globals through the original pointer args.
+func TestNewV2DoesNotAliasGlobalPointers(t *testing.T) {
+	fl := uint32(100)
+	mod := uint8(0x03)
+
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+		&fl, &mod,
+	)
+	require.NoError(t, err)
+
+	// Mutate caller's values — packet should be unaffected.
+	fl = 999
+	mod = 0x00
+
+	require.EqualValues(t, 100, *pkt.FallbackLocktime)
+	require.EqualValues(t, 0x03, *pkt.TxModifiable)
+}
+
 // TestPacketComputedLockTimeV0 verifies the legacy passthrough behavior.
 func TestPacketComputedLockTimeV0(t *testing.T) {
 	packet := &Packet{
@@ -1443,3 +2118,6 @@ func minimalUnsignedTxBytes(t *testing.T) []byte {
 
 	return buf.Bytes()
 }
+
+// ptrU8 returns a pointer to the given uint8 value.
+func ptrU8(v uint8) *uint8 { return &v }

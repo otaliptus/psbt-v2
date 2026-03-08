@@ -112,6 +112,31 @@ var (
 	// default value (SIGHASH_ALL)
 	ErrInvalidSigHashFlags = errors.New("Invalid Sighash Flags")
 
+	// ErrInputsNotModifiable indicates that the Constructor tried to
+	// add or remove an input but the Inputs Modifiable flag (bit 0 of
+	// PSBT_GLOBAL_TX_MODIFIABLE) is not set.
+	ErrInputsNotModifiable = errors.New("inputs are not modifiable")
+
+	// ErrOutputsNotModifiable indicates that the Constructor tried to
+	// add or remove an output but the Outputs Modifiable flag (bit 1
+	// of PSBT_GLOBAL_TX_MODIFIABLE) is not set.
+	ErrOutputsNotModifiable = errors.New("outputs are not modifiable")
+
+	// ErrSignaturesExist indicates that the Constructor tried to
+	// mutate a packet that already contains signature material.
+	// Mutation after signing can silently invalidate signatures.
+	ErrSignaturesExist = errors.New(
+		"cannot mutate packet with existing signatures",
+	)
+
+	// ErrSighashSinglePairing indicates that the Constructor tried to
+	// perform a one-sided input or output mutation while bit 2 (Has
+	// SIGHASH_SINGLE) of PSBT_GLOBAL_TX_MODIFIABLE is set. One-sided
+	// mutations would break the required input-output index pairing.
+	ErrSighashSinglePairing = errors.New(
+		"one-sided mutation not allowed with SIGHASH_SINGLE",
+	)
+
 	// ErrUnsupportedScriptType indicates that the redeem script or
 	// script witness given is not supported by this codebase, or is
 	// otherwise not valid.
