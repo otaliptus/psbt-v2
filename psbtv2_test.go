@@ -106,28 +106,237 @@ func TestPSBTV2MirroredInvalidLocktimeBoundaries(t *testing.T) {
 	})
 }
 
-// TestPSBTV2CurrentGlobalV2FieldsRoundTripAsUnknown documents current behavior:
-// global v2 keys are preserved as Unknowns until global-v2 parsing is added.
-func TestPSBTV2CurrentGlobalV2FieldsRoundTripAsUnknown(t *testing.T) {
-	packet, err := New(nil, nil, 2, 0, nil)
+// TestPSBTV2GlobalFieldsParseIntoPacket verifies the parser now recognizes
+// canonical global v2 fields as first-class Packet fields.
+func TestPSBTV2GlobalFieldsParseIntoPacket(t *testing.T) {
+	raw := buildRawPSBT(
+		t,
+		[]testKV{
+			{keyType: uint8(VersionType), value: u32LE(2)},
+			{keyType: uint8(TxVersionType), value: u32LE(3)},
+			{keyType: uint8(FallbackLocktimeType), value: u32LE(500)},
+			{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+			{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			{keyType: uint8(TxModifiableType), value: []byte{0x03}},
+		},
+		[][]testKV{
+			{
+				{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+				{keyType: uint8(OutputIndexType), value: u32LE(1)},
+			},
+		},
+		[][]testKV{
+			{
+				{keyType: uint8(AmountType), value: u64LE(12345)},
+				{keyType: uint8(ScriptType), value: []byte{0x00, 0x14, 0x01, 0x02}},
+			},
+		},
+	)
+
+	parsed, err := NewFromRawBytes(bytes.NewReader(raw), false)
 	require.NoError(t, err)
+	require.EqualValues(t, 2, parsed.Version)
+	require.EqualValues(t, 3, parsed.TxVersion)
+	require.NotNil(t, parsed.FallbackLocktime)
+	require.EqualValues(t, 500, *parsed.FallbackLocktime)
+	require.NotNil(t, parsed.TxModifiable)
+	require.EqualValues(t, 0x03, *parsed.TxModifiable)
+	require.Nil(t, parsed.UnsignedTx)
+	require.Len(t, parsed.Inputs, 1)
+	require.Len(t, parsed.Outputs, 1)
+	require.Empty(t, parsed.Unknowns)
+	require.NotNil(t, parsed.Inputs[0].PreviousTxID)
+	require.NotNil(t, parsed.Inputs[0].OutputIndex)
+	require.NotNil(t, parsed.Outputs[0].Amount)
+	require.NotNil(t, parsed.Outputs[0].Script)
+}
 
-	packet.Unknowns = []*Unknown{
-		{Key: []byte{byte(TxVersionType)}, Value: u32LE(2)},
-		{Key: []byte{byte(InputCountType)}, Value: []byte{0x00}},
-		{Key: []byte{byte(OutputCountType)}, Value: []byte{0x00}},
-		{Key: []byte{byte(VersionType)}, Value: u32LE(2)},
-	}
+// TestPSBTV2GlobalFieldKeyDataFallbackToUnknown ensures forward-compat
+// behavior for recognized global v2 types with non-empty keydata.
+func TestPSBTV2GlobalFieldKeyDataFallbackToUnknown(t *testing.T) {
+	raw := buildRawPSBT(
+		t,
+		[]testKV{
+			{keyType: uint8(VersionType), value: u32LE(2)},
+			{keyType: uint8(TxVersionType), keyData: []byte{0x01}, value: u32LE(99)},
+			{keyType: uint8(TxVersionType), value: u32LE(2)},
+			{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+			{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+		},
+		[][]testKV{
+			{
+				{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x22}, 32)},
+				{keyType: uint8(OutputIndexType), value: u32LE(0)},
+			},
+		},
+		[][]testKV{
+			{
+				{keyType: uint8(AmountType), value: u64LE(1)},
+				{keyType: uint8(ScriptType), value: []byte{0x51}},
+			},
+		},
+	)
 
-	var buf bytes.Buffer
-	require.NoError(t, packet.Serialize(&buf))
-
-	parsed, err := NewFromRawBytes(bytes.NewReader(buf.Bytes()), false)
+	parsed, err := NewFromRawBytes(bytes.NewReader(raw), false)
 	require.NoError(t, err)
-	require.True(t, hasSingletonGlobalUnknown(parsed.Unknowns, TxVersionType))
-	require.True(t, hasSingletonGlobalUnknown(parsed.Unknowns, InputCountType))
-	require.True(t, hasSingletonGlobalUnknown(parsed.Unknowns, OutputCountType))
-	require.True(t, hasSingletonGlobalUnknown(parsed.Unknowns, VersionType))
+	require.EqualValues(t, 2, parsed.TxVersion)
+	require.True(t, hasUnknownWithKey(parsed.Unknowns, []byte{byte(TxVersionType), 0x01}))
+}
+
+// TestPSBTV2InvalidGlobalFieldsRejected verifies required and forbidden global
+// field combinations are enforced for packet-level v2 parsing.
+func TestPSBTV2InvalidGlobalFieldsRejected(t *testing.T) {
+	t.Run("missing_tx_version", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(VersionType), value: u32LE(2)},
+				{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+				{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+					{keyType: uint8(OutputIndexType), value: u32LE(0)},
+				},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(AmountType), value: u64LE(1)},
+					{keyType: uint8(ScriptType), value: []byte{0x51}},
+				},
+			},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("missing_input_count", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(VersionType), value: u32LE(2)},
+				{keyType: uint8(TxVersionType), value: u32LE(2)},
+				{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+					{keyType: uint8(OutputIndexType), value: u32LE(0)},
+				},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(AmountType), value: u64LE(1)},
+					{keyType: uint8(ScriptType), value: []byte{0x51}},
+				},
+			},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("missing_output_count", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(VersionType), value: u32LE(2)},
+				{keyType: uint8(TxVersionType), value: u32LE(2)},
+				{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+					{keyType: uint8(OutputIndexType), value: u32LE(0)},
+				},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(AmountType), value: u64LE(1)},
+					{keyType: uint8(ScriptType), value: []byte{0x51}},
+				},
+			},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("unsigned_tx_forbidden_in_v2", func(t *testing.T) {
+		unsignedTx := wire.NewMsgTx(2)
+		var txBuf bytes.Buffer
+		require.NoError(t, unsignedTx.SerializeNoWitness(&txBuf))
+
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(UnsignedTxType), value: txBuf.Bytes()},
+				{keyType: uint8(VersionType), value: u32LE(2)},
+				{keyType: uint8(TxVersionType), value: u32LE(2)},
+				{keyType: uint8(InputCountType), value: compactSize(t, 0)},
+				{keyType: uint8(OutputCountType), value: compactSize(t, 0)},
+			},
+			nil,
+			nil,
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("missing_required_v2_input_fields", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(VersionType), value: u32LE(2)},
+				{keyType: uint8(TxVersionType), value: u32LE(2)},
+				{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+				{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+				},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(AmountType), value: u64LE(1)},
+					{keyType: uint8(ScriptType), value: []byte{0x51}},
+				},
+			},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("missing_required_v2_output_fields", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(VersionType), value: u32LE(2)},
+				{keyType: uint8(TxVersionType), value: u32LE(2)},
+				{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+				{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+					{keyType: uint8(OutputIndexType), value: u32LE(0)},
+				},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(AmountType), value: u64LE(1)},
+				},
+			},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
 }
 
 // TestPSBTV2FieldKeyDataFallbackToUnknown ensures forward-compat behavior:
@@ -407,9 +616,50 @@ func u32Ptr(v uint32) *uint32 {
 	return &v
 }
 
-func hasSingletonGlobalUnknown(unknowns []*Unknown, t GlobalType) bool {
+type testKV struct {
+	keyType uint8
+	keyData []byte
+	value   []byte
+}
+
+func buildRawPSBT(t *testing.T, globals []testKV, inputs [][]testKV, outputs [][]testKV) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	_, err := buf.Write(psbtMagic[:])
+	require.NoError(t, err)
+
+	writeTestMap(t, &buf, globals)
+	for _, inputMap := range inputs {
+		writeTestMap(t, &buf, inputMap)
+	}
+	for _, outputMap := range outputs {
+		writeTestMap(t, &buf, outputMap)
+	}
+
+	return buf.Bytes()
+}
+
+func writeTestMap(t *testing.T, w *bytes.Buffer, kvs []testKV) {
+	t.Helper()
+
+	for _, kv := range kvs {
+		putKV(t, w, kv.keyType, kv.keyData, kv.value)
+	}
+	endSection(t, w)
+}
+
+func compactSize(t *testing.T, v uint64) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	require.NoError(t, wire.WriteVarInt(&buf, 0, v))
+	return buf.Bytes()
+}
+
+func hasUnknownWithKey(unknowns []*Unknown, key []byte) bool {
 	for _, u := range unknowns {
-		if len(u.Key) == 1 && u.Key[0] == byte(t) {
+		if bytes.Equal(u.Key, key) {
 			return true
 		}
 	}

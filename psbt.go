@@ -216,7 +216,7 @@ func decodeCompactSizeValue(value []byte) (int, error) {
 }
 
 // /////////////////// PSBTv2 ///////////////////
-// parseGlobalmap reads the entire global map before any input/output parsing.
+// parseGlobalMap reads the entire global map before any input/output parsing.
 // This exists because PSBTv2 cannot be identified by assuming the first global
 // key is `PSBT_GLOBAL_UNSIGNED_TX` like PSBTv0.
 // It sounds good to collect all global fields first,
