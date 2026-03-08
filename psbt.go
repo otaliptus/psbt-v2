@@ -528,12 +528,29 @@ func NewFromRawBytes(r io.Reader, b64 bool) (*Packet, error) {
 // Serialize creates a binary serialization of the referenced Packet struct
 // with lexicographical ordering (by key) of the subsections.
 func (p *Packet) Serialize(w io.Writer) error {
+	if err := p.SanityCheck(); err != nil {
+		return err
+	}
+
 	// First we write out the precise set of magic bytes that identify a
 	// valid PSBT transaction.
 	if _, err := w.Write(psbtMagic[:]); err != nil {
 		return err
 	}
 
+	switch p.Version {
+	case 0:
+		return p.serializeV0(w)
+
+	case 2:
+		return p.serializeV2(w)
+
+	default:
+		return ErrInvalidPsbtFormat
+	}
+}
+
+func (p *Packet) serializeV0(w io.Writer) error {
 	// Next we prep to write out the unsigned transaction by first
 	// serializing it into an intermediate buffer.
 	serializedTx := bytes.NewBuffer(
@@ -574,6 +591,68 @@ func (p *Packet) Serialize(w io.Writer) error {
 		}
 	}
 
+	return p.serializePacketMaps(w)
+}
+
+func (p *Packet) serializeV2(w io.Writer) error {
+	// Serialize the global xPubs first, keeping the same handling as v0.
+	for _, xPub := range p.XPubs {
+		pathBytes := SerializeBIP32Derivation(
+			xPub.MasterKeyFingerprint, xPub.Bip32Path,
+		)
+		err := serializeKVPairWithType(
+			w, uint8(XPubType), xPub.ExtendedKey, pathBytes,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := serializeGlobalInt32(w, TxVersionType, p.TxVersion); err != nil {
+		return err
+	}
+
+	if p.FallbackLocktime != nil {
+		err := serializeGlobalUint32(
+			w, FallbackLocktimeType, *p.FallbackLocktime,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := serializeGlobalCount(w, InputCountType, len(p.Inputs)); err != nil {
+		return err
+	}
+	if err := serializeGlobalCount(w, OutputCountType, len(p.Outputs)); err != nil {
+		return err
+	}
+
+	if p.TxModifiable != nil {
+		err := serializeGlobalByte(w, TxModifiableType, *p.TxModifiable)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := serializeGlobalUint32(w, VersionType, 2); err != nil {
+		return err
+	}
+
+	// Unknown is a special case (I guess?);
+	// we don't have a key type, only a key and
+	// a value field
+	for _, kv := range p.Unknowns {
+		err := serializeKVpair(w, kv.Key, kv.Value)
+		if err != nil {
+			return err
+		}
+	}
+
+	return p.serializePacketMaps(w)
+}
+
+func (p *Packet) serializePacketMaps(w io.Writer) error {
 	// With that our global section is done, so we'll write out the
 	// separator.
 	separator := []byte{0x00}
@@ -604,6 +683,31 @@ func (p *Packet) Serialize(w io.Writer) error {
 	}
 
 	return nil
+}
+
+func serializeGlobalUint32(w io.Writer, keyType GlobalType, value uint32) error {
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], value)
+	return serializeKVPairWithType(w, uint8(keyType), nil, buf[:])
+}
+
+func serializeGlobalInt32(w io.Writer, keyType GlobalType, value int32) error {
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], uint32(value))
+	return serializeKVPairWithType(w, uint8(keyType), nil, buf[:])
+}
+
+func serializeGlobalCount(w io.Writer, keyType GlobalType, count int) error {
+	var buf bytes.Buffer
+	if err := wire.WriteVarInt(&buf, 0, uint64(count)); err != nil {
+		return err
+	}
+
+	return serializeKVPairWithType(w, uint8(keyType), nil, buf.Bytes())
+}
+
+func serializeGlobalByte(w io.Writer, keyType GlobalType, value uint8) error {
+	return serializeKVPairWithType(w, uint8(keyType), nil, []byte{value})
 }
 
 // B64Encode returns the base64 encoding of the serialization of

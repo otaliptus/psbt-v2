@@ -3,8 +3,10 @@ package psbt
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/stretchr/testify/require"
 )
@@ -427,6 +429,101 @@ func TestPacketGetTxVersion(t *testing.T) {
 	})
 }
 
+// TestPSBTV2SerializeRoundTrip ensures packet-level v2 serialization emits a
+// parseable PSBTv2 global map instead of dereferencing UnsignedTx.
+func TestPSBTV2SerializeRoundTrip(t *testing.T) {
+	txModifiable := uint8(0x03)
+	amount := int64(12345)
+
+	packet := &Packet{
+		Version:          2,
+		TxVersion:        3,
+		FallbackLocktime: u32Ptr(500),
+		TxModifiable:     &txModifiable,
+		Inputs: []PInput{
+			{
+				PreviousTxID: hashPtr(0x11),
+				OutputIndex:  u32Ptr(1),
+				Sequence:     u32Ptr(0xfffffffe),
+			},
+		},
+		Outputs: []POutput{
+			{
+				Amount: &amount,
+				Script: []byte{0x00, 0x14, 0x01, 0x02},
+			},
+		},
+		Unknowns: []*Unknown{
+			{
+				Key:   []byte{byte(TxVersionType), 0x01},
+				Value: u32LE(99),
+			},
+		},
+	}
+
+	var serialized bytes.Buffer
+	err := packet.Serialize(&serialized)
+	require.NoError(t, err)
+
+	parsed, err := NewFromRawBytes(bytes.NewReader(serialized.Bytes()), false)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, parsed.Version)
+	require.Nil(t, parsed.UnsignedTx)
+	require.EqualValues(t, 3, parsed.TxVersion)
+	require.NotNil(t, parsed.FallbackLocktime)
+	require.EqualValues(t, 500, *parsed.FallbackLocktime)
+	require.NotNil(t, parsed.TxModifiable)
+	require.EqualValues(t, 0x03, *parsed.TxModifiable)
+	require.Len(t, parsed.Inputs, 1)
+	require.Len(t, parsed.Outputs, 1)
+	require.NotNil(t, parsed.Inputs[0].PreviousTxID)
+	require.NotNil(t, parsed.Inputs[0].OutputIndex)
+	require.NotNil(t, parsed.Inputs[0].Sequence)
+	require.NotNil(t, parsed.Outputs[0].Amount)
+	require.EqualValues(t, 12345, *parsed.Outputs[0].Amount)
+	require.Equal(t, []byte{0x00, 0x14, 0x01, 0x02}, parsed.Outputs[0].Script)
+	require.True(t, hasUnknownWithKey(parsed.Unknowns, []byte{byte(TxVersionType), 0x01}))
+}
+
+// TestPSBTV2B64EncodeRoundTrip ensures the base64 helper remains a thin,
+// working wrapper once v2 serialization is enabled.
+func TestPSBTV2B64EncodeRoundTrip(t *testing.T) {
+	amount := int64(1)
+
+	packet := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{
+			{
+				PreviousTxID: hashPtr(0x22),
+				OutputIndex:  u32Ptr(0),
+			},
+		},
+		Outputs: []POutput{
+			{
+				Amount: &amount,
+				Script: []byte{0x51},
+			},
+		},
+	}
+
+	encoded, err := packet.B64Encode()
+	require.NoError(t, err)
+
+	parsed, err := NewFromRawBytes(strings.NewReader(encoded), true)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, parsed.Version)
+	require.Nil(t, parsed.UnsignedTx)
+	require.EqualValues(t, 2, parsed.TxVersion)
+	require.Len(t, parsed.Inputs, 1)
+	require.Len(t, parsed.Outputs, 1)
+	require.NotNil(t, parsed.Inputs[0].PreviousTxID)
+	require.NotNil(t, parsed.Inputs[0].OutputIndex)
+	require.NotNil(t, parsed.Outputs[0].Amount)
+	require.EqualValues(t, 1, *parsed.Outputs[0].Amount)
+	require.Equal(t, []byte{0x51}, parsed.Outputs[0].Script)
+}
+
 // TestPacketComputedLockTimeV0 verifies the legacy passthrough behavior.
 func TestPacketComputedLockTimeV0(t *testing.T) {
 	packet := &Packet{
@@ -665,4 +762,10 @@ func hasUnknownWithKey(unknowns []*Unknown, key []byte) bool {
 	}
 
 	return false
+}
+
+func hashPtr(fill byte) *chainhash.Hash {
+	var h chainhash.Hash
+	copy(h[:], bytes.Repeat([]byte{fill}, len(h)))
+	return &h
 }
