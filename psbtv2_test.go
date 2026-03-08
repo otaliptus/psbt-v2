@@ -823,6 +823,8 @@ type testKV struct {
 	value   []byte
 }
 
+// buildRawPSBT assembles a raw PSBT packet from explicit global/input/output
+// test maps so packet-level parser cases can be written directly in bytes.
 func buildRawPSBT(t *testing.T, globals []testKV, inputs [][]testKV, outputs [][]testKV) []byte {
 	t.Helper()
 
@@ -841,6 +843,7 @@ func buildRawPSBT(t *testing.T, globals []testKV, inputs [][]testKV, outputs [][
 	return buf.Bytes()
 }
 
+// writeTestMap serializes one PSBT map and appends its terminator byte.
 func writeTestMap(t *testing.T, w *bytes.Buffer, kvs []testKV) {
 	t.Helper()
 
@@ -850,6 +853,8 @@ func writeTestMap(t *testing.T, w *bytes.Buffer, kvs []testKV) {
 	endSection(t, w)
 }
 
+// compactSize encodes a uint64 using Bitcoin's compact-size format for use in
+// INPUT_COUNT/OUTPUT_COUNT test values.
 func compactSize(t *testing.T, v uint64) []byte {
 	t.Helper()
 
@@ -858,6 +863,8 @@ func compactSize(t *testing.T, v uint64) []byte {
 	return buf.Bytes()
 }
 
+// hasUnknownWithKey reports whether a parsed unknown entry preserved the exact
+// serialized key bytes we expect.
 func hasUnknownWithKey(unknowns []*Unknown, key []byte) bool {
 	for _, u := range unknowns {
 		if bytes.Equal(u.Key, key) {
@@ -868,17 +875,19 @@ func hasUnknownWithKey(unknowns []*Unknown, key []byte) bool {
 	return false
 }
 
+// hashPtr creates a stable *chainhash.Hash from a repeated fill byte for
+// compact v2 prevout fixtures.
 func hashPtr(fill byte) *chainhash.Hash {
 	var h chainhash.Hash
 	copy(h[:], bytes.Repeat([]byte{fill}, len(h)))
 	return &h
 }
 
+// minimalUnsignedTxBytes builds a minimal valid unsigned v0 transaction for
+// raw parser tests that need a PSBT_GLOBAL_UNSIGNED_TX payload.
 func minimalUnsignedTxBytes(t *testing.T) []byte {
 	t.Helper()
 
-	// minimalUnsignedTxBytes builds a minimal valid unsigned v0 transaction for
-	// raw parser tests that need a PSBT_GLOBAL_UNSIGNED_TX payload.
 	tx := wire.NewMsgTx(2)
 	tx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0},
