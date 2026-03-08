@@ -621,6 +621,139 @@ func TestBIP370Base64VectorSubset(t *testing.T) {
 	})
 }
 
+// TestV2RejectsTrailingGarbage ensures the parser rejects packets with extra
+// bytes after all declared maps have been consumed.
+func TestV2RejectsTrailingGarbage(t *testing.T) {
+	raw := buildRawPSBT(
+		t,
+		[]testKV{
+			{keyType: uint8(VersionType), value: u32LE(2)},
+			{keyType: uint8(TxVersionType), value: u32LE(2)},
+			{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+			{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+		},
+		[][]testKV{{
+			{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0xaa}, 32)},
+			{keyType: uint8(OutputIndexType), value: u32LE(0)},
+		}},
+		[][]testKV{{
+			{keyType: uint8(AmountType), value: u64LE(1000)},
+			{keyType: uint8(ScriptType), value: []byte{0x51}},
+		}},
+	)
+
+	// Append trailing garbage after the valid packet.
+	raw = append(raw, 0xDE, 0xAD, 0xBE, 0xEF)
+
+	_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestV2RejectsExtraInputMapPastDeclaredCount ensures the parser rejects a
+// packet whose INPUT_COUNT is smaller than the actual number of input maps.
+func TestV2RejectsExtraInputMapPastDeclaredCount(t *testing.T) {
+	// Build globals declaring 1 input, 1 output.
+	var buf bytes.Buffer
+	_, err := buf.Write(psbtMagic[:])
+	require.NoError(t, err)
+
+	// Global map.
+	putKV(t, &buf, uint8(VersionType), nil, u32LE(2))
+	putKV(t, &buf, uint8(TxVersionType), nil, u32LE(2))
+	putKV(t, &buf, uint8(InputCountType), nil, compactSize(t, 1))
+	putKV(t, &buf, uint8(OutputCountType), nil, compactSize(t, 1))
+	endSection(t, &buf)
+
+	// Input map #1 (declared).
+	putKV(t, &buf, uint8(PreviousTxIDType), nil, bytes.Repeat([]byte{0x11}, 32))
+	putKV(t, &buf, uint8(OutputIndexType), nil, u32LE(0))
+	endSection(t, &buf)
+
+	// Output map #1 (declared).
+	putKV(t, &buf, uint8(AmountType), nil, u64LE(1000))
+	putKV(t, &buf, uint8(ScriptType), nil, []byte{0x51})
+	endSection(t, &buf)
+
+	// Extra undeclared input map — should cause rejection.
+	putKV(t, &buf, uint8(PreviousTxIDType), nil, bytes.Repeat([]byte{0x22}, 32))
+	putKV(t, &buf, uint8(OutputIndexType), nil, u32LE(1))
+	endSection(t, &buf)
+
+	_, err = NewFromRawBytes(bytes.NewReader(buf.Bytes()), false)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestV2RejectsExtraOutputMapPastDeclaredCount ensures the parser rejects a
+// packet whose OUTPUT_COUNT is smaller than the actual number of output maps.
+func TestV2RejectsExtraOutputMapPastDeclaredCount(t *testing.T) {
+	var buf bytes.Buffer
+	_, err := buf.Write(psbtMagic[:])
+	require.NoError(t, err)
+
+	// Global map.
+	putKV(t, &buf, uint8(VersionType), nil, u32LE(2))
+	putKV(t, &buf, uint8(TxVersionType), nil, u32LE(2))
+	putKV(t, &buf, uint8(InputCountType), nil, compactSize(t, 1))
+	putKV(t, &buf, uint8(OutputCountType), nil, compactSize(t, 1))
+	endSection(t, &buf)
+
+	// Input map #1 (declared).
+	putKV(t, &buf, uint8(PreviousTxIDType), nil, bytes.Repeat([]byte{0x11}, 32))
+	putKV(t, &buf, uint8(OutputIndexType), nil, u32LE(0))
+	endSection(t, &buf)
+
+	// Output map #1 (declared).
+	putKV(t, &buf, uint8(AmountType), nil, u64LE(1000))
+	putKV(t, &buf, uint8(ScriptType), nil, []byte{0x51})
+	endSection(t, &buf)
+
+	// Extra undeclared output map — should cause rejection.
+	putKV(t, &buf, uint8(AmountType), nil, u64LE(2000))
+	putKV(t, &buf, uint8(ScriptType), nil, []byte{0x51})
+	endSection(t, &buf)
+
+	_, err = NewFromRawBytes(bytes.NewReader(buf.Bytes()), false)
+	require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+}
+
+// TestHugeInputCountRejected ensures that a packet declaring an absurdly large
+// INPUT_COUNT is rejected before allocation.
+func TestHugeInputCountRejected(t *testing.T) {
+	raw := buildRawPSBT(
+		t,
+		[]testKV{
+			{keyType: uint8(VersionType), value: u32LE(2)},
+			{keyType: uint8(TxVersionType), value: u32LE(2)},
+			{keyType: uint8(InputCountType), value: compactSize(t, 1_000_000)},
+			{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+		},
+		nil, // no actual input maps
+		nil, // no actual output maps
+	)
+
+	_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+	require.Error(t, err)
+}
+
+// TestHugeOutputCountRejected ensures that a packet declaring an absurdly large
+// OUTPUT_COUNT is rejected before allocation.
+func TestHugeOutputCountRejected(t *testing.T) {
+	raw := buildRawPSBT(
+		t,
+		[]testKV{
+			{keyType: uint8(VersionType), value: u32LE(2)},
+			{keyType: uint8(TxVersionType), value: u32LE(2)},
+			{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+			{keyType: uint8(OutputCountType), value: compactSize(t, 1_000_000)},
+		},
+		nil,
+		nil,
+	)
+
+	_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+	require.Error(t, err)
+}
+
 // TestPSBTV2FieldKeyDataFallbackToUnknown ensures forward-compat behavior:
 // known v2 type bytes with non-empty keydata are treated as Unknown entries.
 func TestPSBTV2FieldKeyDataFallbackToUnknown(t *testing.T) {
@@ -831,6 +964,148 @@ func TestPSBTV2B64EncodeRoundTrip(t *testing.T) {
 	require.NotNil(t, parsed.Outputs[0].Amount)
 	require.EqualValues(t, 1, *parsed.Outputs[0].Amount)
 	require.Equal(t, []byte{0x51}, parsed.Outputs[0].Script)
+}
+
+// TestBuildUnsignedTxV2 verifies buildUnsignedTx reconstructs a correct
+// wire.MsgTx from v2 per-input/per-output fields without UnsignedTx.
+func TestBuildUnsignedTxV2(t *testing.T) {
+	t.Run("basic_reconstruction", func(t *testing.T) {
+		amount1 := int64(5000)
+		amount2 := int64(3000)
+
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{
+				{
+					PreviousTxID: hashPtr(0xaa),
+					OutputIndex:  u32Ptr(0),
+					Sequence:     u32Ptr(0xfffffffe),
+				},
+				{
+					PreviousTxID: hashPtr(0xbb),
+					OutputIndex:  u32Ptr(3),
+					// Sequence omitted — should default to MaxTxInSequenceNum.
+				},
+			},
+			Outputs: []POutput{
+				{Amount: &amount1, Script: []byte{0x00, 0x14, 0x01}},
+				{Amount: &amount2, Script: []byte{0x51}},
+			},
+		}
+
+		tx, err := packet.buildUnsignedTx()
+		require.NoError(t, err)
+
+		// Transaction-level fields.
+		require.EqualValues(t, 2, tx.Version)
+		require.EqualValues(t, 0, tx.LockTime)
+
+		// Inputs.
+		require.Len(t, tx.TxIn, 2)
+		require.Equal(t, *hashPtr(0xaa), tx.TxIn[0].PreviousOutPoint.Hash)
+		require.EqualValues(t, 0, tx.TxIn[0].PreviousOutPoint.Index)
+		require.EqualValues(t, 0xfffffffe, tx.TxIn[0].Sequence)
+		require.Equal(t, *hashPtr(0xbb), tx.TxIn[1].PreviousOutPoint.Hash)
+		require.EqualValues(t, 3, tx.TxIn[1].PreviousOutPoint.Index)
+		require.EqualValues(t, wire.MaxTxInSequenceNum, tx.TxIn[1].Sequence)
+
+		// Outputs.
+		require.Len(t, tx.TxOut, 2)
+		require.EqualValues(t, 5000, tx.TxOut[0].Value)
+		require.Equal(t, []byte{0x00, 0x14, 0x01}, tx.TxOut[0].PkScript)
+		require.EqualValues(t, 3000, tx.TxOut[1].Value)
+		require.Equal(t, []byte{0x51}, tx.TxOut[1].PkScript)
+	})
+
+	t.Run("with_locktime", func(t *testing.T) {
+		amount := int64(1)
+
+		packet := &Packet{
+			Version:          2,
+			TxVersion:        2,
+			FallbackLocktime: u32Ptr(800000),
+			Inputs: []PInput{
+				{
+					PreviousTxID: hashPtr(0xcc),
+					OutputIndex:  u32Ptr(0),
+				},
+			},
+			Outputs: []POutput{
+				{Amount: &amount, Script: []byte{0x51}},
+			},
+		}
+
+		tx, err := packet.buildUnsignedTx()
+		require.NoError(t, err)
+		require.EqualValues(t, 800000, tx.LockTime)
+	})
+
+	t.Run("missing_prevout_returns_error", func(t *testing.T) {
+		amount := int64(1)
+
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs:    []PInput{{}},
+			Outputs: []POutput{
+				{Amount: &amount, Script: []byte{0x51}},
+			},
+		}
+
+		_, err := packet.buildUnsignedTx()
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("missing_output_script_returns_error", func(t *testing.T) {
+		amount := int64(1)
+
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{
+				{
+					PreviousTxID: hashPtr(0xdd),
+					OutputIndex:  u32Ptr(0),
+				},
+			},
+			Outputs: []POutput{
+				{Amount: &amount},
+			},
+		}
+
+		_, err := packet.buildUnsignedTx()
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("v0_returns_copy", func(t *testing.T) {
+		orig := wire.NewMsgTx(1)
+		orig.LockTime = 42
+		orig.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: *hashPtr(0xff), Index: 0},
+			Sequence:         wire.MaxTxInSequenceNum,
+		})
+		orig.AddTxOut(&wire.TxOut{Value: 100, PkScript: []byte{0x51}})
+
+		packet := &Packet{
+			Version:    0,
+			UnsignedTx: orig,
+			Inputs:     []PInput{{}},
+			Outputs:    []POutput{{}},
+		}
+
+		tx, err := packet.buildUnsignedTx()
+		require.NoError(t, err)
+
+		// Should be equal but not the same pointer.
+		require.EqualValues(t, orig.LockTime, tx.LockTime)
+		require.Len(t, tx.TxIn, 1)
+		require.Len(t, tx.TxOut, 1)
+
+		// Mutating the copy should not affect the original.
+		tx.LockTime = 999
+		require.EqualValues(t, 42, orig.LockTime)
+	})
 }
 
 // TestPacketComputedLockTimeV0 verifies the legacy passthrough behavior.

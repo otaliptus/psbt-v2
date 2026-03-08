@@ -44,6 +44,12 @@ const MaxPsbtKeyLength = 10000
 // to have a consistent behavior.
 const MaxPsbtKeyValue = 0x02000000
 
+// TODO: Consider this again.
+// maxPsbtInputOutputCount is a sanity cap on the number of inputs or outputs
+// a PSBT may declare. This prevents a malicious packet from triggering huge
+// allocations. Real-world transactions rarely exceed a few thousand I/O.
+const maxPsbtInputOutputCount = 100_000
+
 var (
 
 	// ErrInvalidPsbtFormat is a generic error for any situation in which a
@@ -340,6 +346,9 @@ func parseGlobalMap(r io.Reader) (*Packet, int, int, error) {
 			if err != nil {
 				return nil, 0, 0, err
 			}
+			if count > maxPsbtInputOutputCount {
+				return nil, 0, 0, ErrInvalidPsbtFormat
+			}
 			inputCount = &count
 
 		case OutputCountType:
@@ -357,6 +366,9 @@ func parseGlobalMap(r io.Reader) (*Packet, int, int, error) {
 			count, err := decodeCompactSizeValue(value)
 			if err != nil {
 				return nil, 0, 0, err
+			}
+			if count > maxPsbtInputOutputCount {
+				return nil, 0, 0, ErrInvalidPsbtFormat
 			}
 			outputCount = &count
 
@@ -515,6 +527,17 @@ func NewFromRawBytes(r io.Reader, b64 bool) (*Packet, error) {
 	// Populate the Packet with the parsed input/output maps.
 	pkt.Inputs = inSlice
 	pkt.Outputs = outSlice
+
+	// The reader must be exhausted after the declared maps. Trailing bytes
+	// indicate either a count mismatch or appended garbage — both are
+	// invalid. This is especially important for v2 where INPUT_COUNT and
+	// OUTPUT_COUNT are attacker-controlled.
+	var trail [1]byte
+	if _, err := io.ReadFull(r, trail[:]); err != io.EOF &&
+		err != io.ErrUnexpectedEOF {
+
+		return nil, ErrInvalidPsbtFormat
+	}
 
 	// Extended sanity checking is applied here to ensure the parsed packet
 	// obeys the rules for its PSBT version.
@@ -901,7 +924,7 @@ func (p *Packet) GetTxFee() (btcutil.Amount, error) {
 
 // inputPrevOutpoint returns the prevout for the input i
 // For PSBTv2, returns error if required fields are missing
-func (p *Packet) inputPrevOutpount(i int) (wire.OutPoint, error) {
+func (p *Packet) inputPrevOutpoint(i int) (wire.OutPoint, error) {
 	if p.Version == 0 {
 		return p.UnsignedTx.TxIn[i].PreviousOutPoint, nil
 	}
@@ -961,7 +984,7 @@ func (p *Packet) inputUtxoValue(i int) (int64, error) {
 		return in.WitnessUtxo.Value, nil
 
 	case in.NonWitnessUtxo != nil:
-		prevOut, err := p.inputPrevOutpount(i)
+		prevOut, err := p.inputPrevOutpoint(i)
 		if err != nil {
 			return 0, err
 		}
@@ -975,6 +998,62 @@ func (p *Packet) inputUtxoValue(i int) (int64, error) {
 	default:
 		return 0, errors.New("input has no UTXO information")
 	}
+}
+
+// buildUnsignedTx reconstructs the unsigned transaction from the packet's
+// fields. For v0 this is a copy of UnsignedTx. For v2 the transaction is
+// assembled from per-input/per-output fields and the computed locktime.
+//
+// The returned MsgTx is a fresh copy — callers may mutate it freely.
+// This is the shared foundation for the extractor, v2→v0 conversion,
+// and signer/finalizer paths that need a concrete transaction.
+func (p *Packet) buildUnsignedTx() (*wire.MsgTx, error) {
+	if p.Version == 0 {
+		if p.UnsignedTx == nil {
+			return nil, ErrInvalidPsbtFormat
+		}
+
+		return p.UnsignedTx.Copy(), nil
+	}
+
+	locktime, err := p.ComputedLockTime()
+	if err != nil {
+		return nil, err
+	}
+
+	tx := wire.NewMsgTx(p.GetTxVersion())
+	tx.LockTime = locktime
+
+	for i := range p.Inputs {
+		prevOut, err := p.inputPrevOutpoint(i)
+		if err != nil {
+			return nil, err
+		}
+
+		tx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: prevOut,
+			Sequence:         p.inputSequence(i),
+		})
+	}
+
+	for i := range p.Outputs {
+		amount, err := p.outputAmount(i)
+		if err != nil {
+			return nil, err
+		}
+
+		script, err := p.outputScript(i)
+		if err != nil {
+			return nil, err
+		}
+
+		tx.AddTxOut(&wire.TxOut{
+			Value:    amount,
+			PkScript: script,
+		})
+	}
+
+	return tx, nil
 }
 
 // ComputedLockTime returns the transaction locktime.
