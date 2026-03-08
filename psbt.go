@@ -741,7 +741,23 @@ func (p *Packet) B64Encode() (string, error) {
 // whether the final extraction to a network serialized signed
 // transaction will be possible.
 func (p *Packet) IsComplete() bool {
-	for i := 0; i < len(p.UnsignedTx.TxIn); i++ {
+	switch p.Version {
+	case 0:
+		if p.UnsignedTx == nil {
+			return false
+		}
+		if len(p.Inputs) != len(p.UnsignedTx.TxIn) {
+			return false
+		}
+
+	case 2:
+		// Input count comes from packet maps in v2.
+
+	default:
+		return false
+	}
+
+	for i := range p.Inputs {
 		if !isFinalized(p, i) {
 			return false
 		}
@@ -766,6 +782,27 @@ func (p *Packet) SanityCheck() error {
 			len(p.Outputs) != len(p.UnsignedTx.TxOut) {
 
 			return ErrInvalidPsbtFormat
+		}
+		// v2-only globals/fields are forbidden in v0 packets.
+		if p.TxVersion != 0 || p.FallbackLocktime != nil ||
+			p.TxModifiable != nil {
+
+			return ErrInvalidPsbtFormat
+		}
+
+		for _, in := range p.Inputs {
+			if in.PreviousTxID != nil || in.OutputIndex != nil ||
+				in.Sequence != nil || in.RequiredTimeLocktime != nil ||
+				in.RequiredHeightLocktime != nil {
+
+				return ErrInvalidPsbtFormat
+			}
+		}
+
+		for _, out := range p.Outputs {
+			if out.Amount != nil || out.Script != nil {
+				return ErrInvalidPsbtFormat
+			}
 		}
 
 	case 2:
@@ -821,18 +858,31 @@ func (p *Packet) SanityCheck() error {
 // GetTxFee returns the transaction fee.  An error is returned if a transaction
 // input does not contain any UTXO information.
 func (p *Packet) GetTxFee() (btcutil.Amount, error) {
-	sumInputs, err := SumUtxoInputValues(p)
-	if err != nil {
+	if err := p.SanityCheck(); err != nil {
 		return 0, err
 	}
 
-	var sumOutputs int64
-	for _, txOut := range p.UnsignedTx.TxOut {
-		sumOutputs += txOut.Value
+	var sumInputs int64
+	for i := range p.Inputs {
+		value, err := p.inputUtxoValue(i)
+		if err != nil {
+			return 0, err
+		}
+
+		sumInputs += value
 	}
 
-	fee := sumInputs - sumOutputs
-	return btcutil.Amount(fee), nil
+	var sumOutputs int64
+	for i := range p.Outputs {
+		value, err := p.outputAmount(i)
+		if err != nil {
+			return 0, err
+		}
+
+		sumOutputs += value
+	}
+
+	return btcutil.Amount(sumInputs - sumOutputs), nil
 }
 
 // ////////////////////////////////////////
@@ -899,6 +949,32 @@ func (p *Packet) outputScript(i int) ([]byte, error) {
 		return nil, ErrInvalidPsbtFormat
 	}
 	return p.Outputs[i].Script, nil
+}
+
+// Returns the input value for input i.
+// For PSBTv2, the prevout is resolved from per-input fields.
+func (p *Packet) inputUtxoValue(i int) (int64, error) {
+	in := p.Inputs[i]
+
+	switch {
+	case in.WitnessUtxo != nil:
+		return in.WitnessUtxo.Value, nil
+
+	case in.NonWitnessUtxo != nil:
+		prevOut, err := p.inputPrevOutpount(i)
+		if err != nil {
+			return 0, err
+		}
+
+		if prevOut.Index >= uint32(len(in.NonWitnessUtxo.TxOut)) {
+			return 0, ErrInvalidPsbtFormat
+		}
+
+		return in.NonWitnessUtxo.TxOut[prevOut.Index].Value, nil
+
+	default:
+		return 0, errors.New("input has no UTXO information")
+	}
 }
 
 // ComputedLockTime returns the transaction locktime.

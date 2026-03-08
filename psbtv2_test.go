@@ -445,6 +445,182 @@ func TestPSBTV2InvalidGlobalFieldsRejected(t *testing.T) {
 	})
 }
 
+// TestPSBTV0RejectsV2InputOutputFields verifies v0 packets reject v2-only
+// per-input/per-output fields from BIP370's invalid matrix.
+func TestPSBTV0RejectsV2InputOutputFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		inputs  [][]testKV
+		outputs [][]testKV
+	}{
+		{
+			name: "v0_rejects_previous_txid",
+			inputs: [][]testKV{
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+				},
+			},
+			outputs: [][]testKV{{}},
+		},
+		{
+			name: "v0_rejects_output_index",
+			inputs: [][]testKV{
+				{
+					{keyType: uint8(OutputIndexType), value: u32LE(0)},
+				},
+			},
+			outputs: [][]testKV{{}},
+		},
+		{
+			name: "v0_rejects_sequence",
+			inputs: [][]testKV{
+				{
+					{keyType: uint8(SequenceType), value: u32LE(0xfffffffe)},
+				},
+			},
+			outputs: [][]testKV{{}},
+		},
+		{
+			name: "v0_rejects_required_time_locktime",
+			inputs: [][]testKV{
+				{
+					{keyType: uint8(RequiredTimeLocktimeType), value: u32LE(LocktimeThreshold)},
+				},
+			},
+			outputs: [][]testKV{{}},
+		},
+		{
+			name: "v0_rejects_required_height_locktime",
+			inputs: [][]testKV{
+				{
+					{keyType: uint8(RequiredHeightLocktimeType), value: u32LE(1)},
+				},
+			},
+			outputs: [][]testKV{{}},
+		},
+		{
+			name:   "v0_rejects_output_amount",
+			inputs: [][]testKV{{}},
+			outputs: [][]testKV{
+				{
+					{keyType: uint8(AmountType), value: u64LE(1)},
+				},
+			},
+		},
+		{
+			name:   "v0_rejects_output_script",
+			inputs: [][]testKV{{}},
+			outputs: [][]testKV{
+				{
+					{keyType: uint8(ScriptType), value: []byte{0x51}},
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := buildRawPSBT(
+				t,
+				[]testKV{
+					{keyType: uint8(UnsignedTxType), value: minimalUnsignedTxBytes(t)},
+					{keyType: uint8(VersionType), value: u32LE(0)},
+				},
+				test.inputs,
+				test.outputs,
+			)
+
+			_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+			require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+		})
+	}
+}
+
+// TestSerializeV0RejectsV2InputOutputFields verifies the serializer refuses to
+// emit v0 packets containing v2-only per-input/per-output fields.
+func TestSerializeV0RejectsV2InputOutputFields(t *testing.T) {
+	t.Run("reject_v2_input_fields_in_v0", func(t *testing.T) {
+		packet := &Packet{
+			Version:    0,
+			UnsignedTx: &wire.MsgTx{TxIn: []*wire.TxIn{{}}, TxOut: []*wire.TxOut{{Value: 1}}},
+			Inputs: []PInput{
+				{
+					PreviousTxID: hashPtr(0x11),
+					OutputIndex:  u32Ptr(0),
+				},
+			},
+			Outputs: []POutput{{}},
+		}
+
+		var serialized bytes.Buffer
+		err := packet.Serialize(&serialized)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("reject_v2_output_fields_in_v0", func(t *testing.T) {
+		amount := int64(1)
+
+		packet := &Packet{
+			Version:    0,
+			UnsignedTx: &wire.MsgTx{TxIn: []*wire.TxIn{{}}, TxOut: []*wire.TxOut{{Value: 1}}},
+			Inputs:     []PInput{{}},
+			Outputs: []POutput{
+				{
+					Amount: &amount,
+					Script: []byte{0x51},
+				},
+			},
+		}
+
+		var serialized bytes.Buffer
+		err := packet.Serialize(&serialized)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+}
+
+// TestBIP370Base64VectorSubset runs a small set of literal BIP370 base64
+// vectors to anchor parser behavior against the published fixtures.
+//
+// Source:
+// https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#test-vectors
+func TestBIP370Base64VectorSubset(t *testing.T) {
+	t.Run("invalid_v0_with_psbt_in_previous_txid", func(t *testing.T) {
+		// Case: PSBTv0 but with PSBT_IN_PREVIOUS_TXID.
+		const vector = "cHNidP8BAHECAAAAAQsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAAAAAAD+////AgAIry8AAAAAFgAUxDD2TEdW2jENvRoIVXLvKZkmJyyLvesLAAAAABYAFKB9rIq2ypQtN57Xlfg1unHJzGiFAAAAAAABAFICAAAAAcGqJW4hS5ahgi+T3kK/87Xz/40FGTBuNRXXUVpegFsSAAAAAAD/////ARjGmjsAAAAAFgAUsKOvFEIIQSaTyn0WaFK1LbCu8G4AAAAAAQEfGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgEIawJHMEQCIAUnWkhXNOCuHzuXEjdYbw5y3IWDPSeMDkdM0jESwPpeAiBrBIyDzrw8QdC5PMfadhhc7b0DDQBbCAGL4rmLusvfewEhA3YNzKBfOZfcZbKTBg9/KfFRTIxScEjhKAKwQdT8NAonAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gAIgIC1gH4SEamdV93a+AOPZ3o+xCsyTX7g8RfsBYtTK1at5IY9p2HPlQAAIABAACAAAAAgAAAAAAqAAAAACICA27+LCVWIZhlU7qdZcPdxkFlyhQ24FqjWkxusCRRz3ltGPadhz5UAACAAQAAgAAAAIABAAAAYgAAAAA="
+
+		_, err := NewFromRawBytes(strings.NewReader(vector), true)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("invalid_v2_missing_input_count", func(t *testing.T) {
+		// Case: PSBTv2 missing PSBT_GLOBAL_INPUT_COUNT.
+		const vector = "cHNidP8BAgQCAAAAAQMEAAAAAAEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAARAE/v///wAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="
+
+		_, err := NewFromRawBytes(strings.NewReader(vector), true)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("invalid_v2_required_time_locktime_below_threshold", func(t *testing.T) {
+		// Case: PSBTv2 with PSBT_IN_REQUIRED_TIME_LOCKTIME less than 500000000.
+		const vector = "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAAREE/2TNHQAiAgLWAfhIRqZ1X3dr4A49nej7EKzJNfuDxF+wFi1MrVq3khj2nYc+VAAAgAEAAIAAAACAAAAAACoAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAIgIC42+/9T3VNAcM+P05ZhRoDzV6m4Xbc0C/HPp0XSrXs0AY9p2HPlQAAIABAACAAAAAgAEAAABkAAAAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="
+
+		_, err := NewFromRawBytes(strings.NewReader(vector), true)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("valid_v2_required_fields_only", func(t *testing.T) {
+		// Case: 1 input, 2 output PSBTv2, required fields only.
+		const vector = "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA=="
+
+		p, err := NewFromRawBytes(strings.NewReader(vector), true)
+		require.NoError(t, err)
+		require.EqualValues(t, 2, p.Version)
+		require.Nil(t, p.UnsignedTx)
+		require.Len(t, p.Inputs, 1)
+		require.Len(t, p.Outputs, 2)
+	})
+}
+
 // TestPSBTV2FieldKeyDataFallbackToUnknown ensures forward-compat behavior:
 // known v2 type bytes with non-empty keydata are treated as Unknown entries.
 func TestPSBTV2FieldKeyDataFallbackToUnknown(t *testing.T) {
@@ -530,6 +706,35 @@ func TestPacketGetTxVersion(t *testing.T) {
 		}
 
 		require.EqualValues(t, 4, packet.GetTxVersion())
+	})
+}
+
+// TestPacketIsCompleteV2 verifies v2 completeness checks do not depend on
+// UnsignedTx and therefore do not panic when it is nil.
+func TestPacketIsCompleteV2(t *testing.T) {
+	t.Run("incomplete_v2_packet", func(t *testing.T) {
+		packet := &Packet{
+			Version: 2,
+			Inputs:  []PInput{{}},
+		}
+
+		require.NotPanics(t, func() {
+			require.False(t, packet.IsComplete())
+		})
+	})
+
+	t.Run("complete_v2_packet", func(t *testing.T) {
+		packet := &Packet{
+			Version: 2,
+			Inputs: []PInput{
+				{FinalScriptSig: []byte{0x51}},
+				{FinalScriptWitness: []byte{0x00}},
+			},
+		}
+
+		require.NotPanics(t, func() {
+			require.True(t, packet.IsComplete())
+		})
 	})
 }
 
@@ -637,6 +842,69 @@ func TestPacketComputedLockTimeV0(t *testing.T) {
 	locktime, err := packet.ComputedLockTime()
 	require.NoError(t, err)
 	require.EqualValues(t, 12345, locktime)
+}
+
+// TestPacketGetTxFeeV2 verifies fee calculation on v2 packets is version-aware
+// and does not depend on UnsignedTx being present.
+func TestPacketGetTxFeeV2(t *testing.T) {
+	t.Run("mixed_witness_and_nonwitness_utxo", func(t *testing.T) {
+		amount := int64(1000)
+		nonWitness := wire.NewMsgTx(2)
+		nonWitness.AddTxOut(&wire.TxOut{Value: 123, PkScript: []byte{0x51}})
+		nonWitness.AddTxOut(&wire.TxOut{Value: 500, PkScript: []byte{0x51}})
+
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{
+				{
+					PreviousTxID: hashPtr(0x11),
+					OutputIndex:  u32Ptr(0),
+					WitnessUtxo:  &wire.TxOut{Value: 700, PkScript: []byte{0x51}},
+				},
+				{
+					PreviousTxID:   hashPtr(0x22),
+					OutputIndex:    u32Ptr(1),
+					NonWitnessUtxo: nonWitness,
+				},
+			},
+			Outputs: []POutput{
+				{
+					Amount: &amount,
+					Script: []byte{0x51},
+				},
+			},
+		}
+
+		fee, err := packet.GetTxFee()
+		require.NoError(t, err)
+		require.EqualValues(t, 200, fee)
+	})
+
+	t.Run("missing_utxo_info_returns_error", func(t *testing.T) {
+		amount := int64(1)
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{
+				{
+					PreviousTxID: hashPtr(0x33),
+					OutputIndex:  u32Ptr(0),
+				},
+			},
+			Outputs: []POutput{
+				{
+					Amount: &amount,
+					Script: []byte{0x51},
+				},
+			},
+		}
+
+		require.NotPanics(t, func() {
+			_, err := packet.GetTxFee()
+			require.Error(t, err)
+		})
+	})
 }
 
 // SOURCE:
