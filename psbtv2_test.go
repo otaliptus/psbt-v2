@@ -153,6 +153,46 @@ func TestPSBTV2GlobalFieldsParseIntoPacket(t *testing.T) {
 	require.NotNil(t, parsed.Outputs[0].Script)
 }
 
+// TestParseV2_GlobalOrderIndependence verifies parseGlobalMap does not depend
+// on any specific ordering of v2 global keys.
+func TestParseV2_GlobalOrderIndependence(t *testing.T) {
+	raw := buildRawPSBT(
+		t,
+		[]testKV{
+			{keyType: uint8(TxModifiableType), value: []byte{0x03}},
+			{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			{keyType: uint8(FallbackLocktimeType), value: u32LE(500)},
+			{keyType: uint8(TxVersionType), value: u32LE(3)},
+			{keyType: uint8(InputCountType), value: compactSize(t, 1)},
+			{keyType: uint8(VersionType), value: u32LE(2)},
+		},
+		[][]testKV{
+			{
+				{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x33}, 32)},
+				{keyType: uint8(OutputIndexType), value: u32LE(2)},
+			},
+		},
+		[][]testKV{
+			{
+				{keyType: uint8(AmountType), value: u64LE(5000)},
+				{keyType: uint8(ScriptType), value: []byte{0x51}},
+			},
+		},
+	)
+
+	parsed, err := NewFromRawBytes(bytes.NewReader(raw), false)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, parsed.Version)
+	require.EqualValues(t, 3, parsed.TxVersion)
+	require.NotNil(t, parsed.FallbackLocktime)
+	require.EqualValues(t, 500, *parsed.FallbackLocktime)
+	require.NotNil(t, parsed.TxModifiable)
+	require.EqualValues(t, 0x03, *parsed.TxModifiable)
+	require.Len(t, parsed.Inputs, 1)
+	require.Len(t, parsed.Outputs, 1)
+	require.Nil(t, parsed.UnsignedTx)
+}
+
 // TestPSBTV2GlobalFieldKeyDataFallbackToUnknown ensures forward-compat
 // behavior for recognized global v2 types with non-empty keydata.
 func TestPSBTV2GlobalFieldKeyDataFallbackToUnknown(t *testing.T) {
@@ -188,6 +228,37 @@ func TestPSBTV2GlobalFieldKeyDataFallbackToUnknown(t *testing.T) {
 // TestPSBTV2InvalidGlobalFieldsRejected verifies required and forbidden global
 // field combinations are enforced for packet-level v2 parsing.
 func TestPSBTV2InvalidGlobalFieldsRejected(t *testing.T) {
+	t.Run("implicit_v0_rejects_v2_globals", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(UnsignedTxType), value: minimalUnsignedTxBytes(t)},
+				{keyType: uint8(TxVersionType), value: u32LE(2)},
+			},
+			[][]testKV{{}},
+			[][]testKV{{}},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("explicit_v0_rejects_v2_globals", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(UnsignedTxType), value: minimalUnsignedTxBytes(t)},
+				{keyType: uint8(VersionType), value: u32LE(0)},
+				{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			},
+			[][]testKV{{}},
+			[][]testKV{{}},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
 	t.Run("missing_tx_version", func(t *testing.T) {
 		raw := buildRawPSBT(
 			t,
@@ -332,6 +403,39 @@ func TestPSBTV2InvalidGlobalFieldsRejected(t *testing.T) {
 			[][]testKV{
 				{
 					{keyType: uint8(AmountType), value: u64LE(1)},
+				},
+			},
+		)
+
+		_, err := NewFromRawBytes(bytes.NewReader(raw), false)
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("incompatible_v2_locktime_constraints", func(t *testing.T) {
+		raw := buildRawPSBT(
+			t,
+			[]testKV{
+				{keyType: uint8(VersionType), value: u32LE(2)},
+				{keyType: uint8(TxVersionType), value: u32LE(2)},
+				{keyType: uint8(InputCountType), value: compactSize(t, 2)},
+				{keyType: uint8(OutputCountType), value: compactSize(t, 1)},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x11}, 32)},
+					{keyType: uint8(OutputIndexType), value: u32LE(0)},
+					{keyType: uint8(RequiredHeightLocktimeType), value: u32LE(10000)},
+				},
+				{
+					{keyType: uint8(PreviousTxIDType), value: bytes.Repeat([]byte{0x22}, 32)},
+					{keyType: uint8(OutputIndexType), value: u32LE(1)},
+					{keyType: uint8(RequiredTimeLocktimeType), value: u32LE(1657048460)},
+				},
+			},
+			[][]testKV{
+				{
+					{keyType: uint8(AmountType), value: u64LE(1)},
+					{keyType: uint8(ScriptType), value: []byte{0x51}},
 				},
 			},
 		)
@@ -768,4 +872,22 @@ func hashPtr(fill byte) *chainhash.Hash {
 	var h chainhash.Hash
 	copy(h[:], bytes.Repeat([]byte{fill}, len(h)))
 	return &h
+}
+
+func minimalUnsignedTxBytes(t *testing.T) []byte {
+	t.Helper()
+
+	// minimalUnsignedTxBytes builds a minimal valid unsigned v0 transaction for
+	// raw parser tests that need a PSBT_GLOBAL_UNSIGNED_TX payload.
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0},
+		Sequence:         wire.MaxTxInSequenceNum,
+	})
+	tx.AddTxOut(&wire.TxOut{Value: 1, PkScript: []byte{0x51}})
+
+	var buf bytes.Buffer
+	require.NoError(t, tx.SerializeNoWitness(&buf))
+
+	return buf.Bytes()
 }

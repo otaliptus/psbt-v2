@@ -551,6 +551,8 @@ func (p *Packet) Serialize(w io.Writer) error {
 }
 
 func (p *Packet) serializeV0(w io.Writer) error {
+	// serializeV0 preserves the legacy BIP-174 packet shape:
+	// PSBT_GLOBAL_UNSIGNED_TX in the global map, then shared maps/unknowns.
 	// Next we prep to write out the unsigned transaction by first
 	// serializing it into an intermediate buffer.
 	serializedTx := bytes.NewBuffer(
@@ -595,6 +597,9 @@ func (p *Packet) serializeV0(w io.Writer) error {
 }
 
 func (p *Packet) serializeV2(w io.Writer) error {
+	// serializeV2 emits a BIP-370 packet-level encoding. Unlike v0, it does
+	// not serialize PSBT_GLOBAL_UNSIGNED_TX; transaction structure comes from
+	// the v2 global fields plus the input/output maps.
 	// Serialize the global xPubs first, keeping the same handling as v0.
 	for _, xPub := range p.XPubs {
 		pathBytes := SerializeBIP32Derivation(
@@ -653,6 +658,8 @@ func (p *Packet) serializeV2(w io.Writer) error {
 }
 
 func (p *Packet) serializePacketMaps(w io.Writer) error {
+	// serializePacketMaps writes the global-map terminator, then each
+	// input/output map followed by its own separator byte.
 	// With that our global section is done, so we'll write out the
 	// separator.
 	separator := []byte{0x00}
@@ -686,18 +693,24 @@ func (p *Packet) serializePacketMaps(w io.Writer) error {
 }
 
 func serializeGlobalUint32(w io.Writer, keyType GlobalType, value uint32) error {
+	// serializeGlobalUint32 writes a singleton global field whose value is a
+	// 4-byte little-endian uint32.
 	var buf [4]byte
 	binary.LittleEndian.PutUint32(buf[:], value)
 	return serializeKVPairWithType(w, uint8(keyType), nil, buf[:])
 }
 
 func serializeGlobalInt32(w io.Writer, keyType GlobalType, value int32) error {
+	// serializeGlobalInt32 writes a singleton global field whose value is
+	// stored on the wire as a 4-byte little-endian integer.
 	var buf [4]byte
 	binary.LittleEndian.PutUint32(buf[:], uint32(value))
 	return serializeKVPairWithType(w, uint8(keyType), nil, buf[:])
 }
 
 func serializeGlobalCount(w io.Writer, keyType GlobalType, count int) error {
+	// serializeGlobalCount writes INPUT_COUNT/OUTPUT_COUNT using compact-size
+	// encoding inside the PSBT value.
 	var buf bytes.Buffer
 	if err := wire.WriteVarInt(&buf, 0, uint64(count)); err != nil {
 		return err
@@ -707,6 +720,8 @@ func serializeGlobalCount(w io.Writer, keyType GlobalType, count int) error {
 }
 
 func serializeGlobalByte(w io.Writer, keyType GlobalType, value uint8) error {
+	// serializeGlobalByte writes a singleton one-byte global field such as
+	// PSBT_GLOBAL_TX_MODIFIABLE.
 	return serializeKVPairWithType(w, uint8(keyType), nil, []byte{value})
 }
 
@@ -782,6 +797,12 @@ func (p *Packet) SanityCheck() error {
 			if out.Amount == nil || out.Script == nil {
 				return ErrInvalidPsbtFormat
 			}
+		}
+
+		// Reject v2 packets whose locktime requirements cannot resolve to a
+		// single transaction nLockTime.
+		if _, err := p.ComputedLockTime(); err != nil {
+			return err
 		}
 
 	default:
