@@ -2400,5 +2400,276 @@ func TestV2AddPartialSigPrevOutValidation(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidSignatureForInput)
 }
 
+// TestV2ExtractReconstructsTx verifies that Extract on a finalized v2 packet
+// reconstructs the transaction from per-input/output fields and applies the
+// final sigScript/witness data.
+func TestV2ExtractReconstructsTx(t *testing.T) {
+	pkt := makeV2WithWitnessUtxo(t, nil)
+	require.Nil(t, pkt.UnsignedTx)
+
+	// Sign the single input.
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, SignOutcome(SignSuccesful), res)
+
+	// Finalize.
+	err = MaybeFinalizeAll(pkt)
+	require.NoError(t, err)
+	require.True(t, pkt.IsComplete())
+
+	// Extract.
+	tx, err := Extract(pkt)
+	require.NoError(t, err)
+	require.NotNil(t, tx)
+
+	// The extracted tx should have correct structure.
+	require.Len(t, tx.TxIn, 1)
+	require.Len(t, tx.TxOut, 1)
+	require.Equal(t, int32(2), tx.Version)
+
+	// Input should reference the prevout we set up.
+	txid := chainhash.HashH([]byte("test-prevout"))
+	require.Equal(t, txid, tx.TxIn[0].PreviousOutPoint.Hash)
+	require.Equal(t, uint32(0), tx.TxIn[0].PreviousOutPoint.Index)
+
+	// Output amount and script should match.
+	require.Equal(t, int64(40_000), tx.TxOut[0].Value)
+	require.Equal(t, []byte{0x51}, tx.TxOut[0].PkScript)
+
+	// Witness should be populated (P2WPKH: [sig, pubkey]).
+	require.NotNil(t, tx.TxIn[0].Witness)
+	require.Len(t, tx.TxIn[0].Witness, 2)
+}
+
+// TestV2ExtractIncompleteReturnsError verifies Extract rejects a v2 packet
+// that is not fully finalized.
+func TestV2ExtractIncompleteReturnsError(t *testing.T) {
+	pkt := makeV2WithWitnessUtxo(t, nil)
+	require.Nil(t, pkt.UnsignedTx)
+
+	// Don't sign or finalize — should fail.
+	_, err := Extract(pkt)
+	require.ErrorIs(t, err, ErrIncompletePSBT)
+}
+
+// TestV2ExtractWithLocktime verifies that Extract applies the computed
+// locktime from v2 per-input locktime fields.
+func TestV2ExtractWithLocktime(t *testing.T) {
+	txid := chainhash.HashH([]byte("locktime-test"))
+	idx := uint32(0)
+	amt := int64(50_000)
+	height := uint32(800_000)
+
+	pubKeyHash := btcutil.Hash160(testPub1)
+	scriptPubKey, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_0).
+		AddData(pubKeyHash).
+		Script()
+	require.NoError(t, err)
+
+	outAmt := int64(40_000)
+	outScript := []byte{0x51}
+
+	pkt := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{{
+			PreviousTxID:          &txid,
+			OutputIndex:           &idx,
+			RequiredHeightLocktime: &height,
+			WitnessUtxo: &wire.TxOut{
+				Value:    amt,
+				PkScript: scriptPubKey,
+			},
+			PartialSigs:     []*PartialSig{},
+			Bip32Derivation: []*Bip32Derivation{},
+		}},
+		Outputs: []POutput{{
+			Amount: &outAmt,
+			Script: outScript,
+		}},
+	}
+	require.NoError(t, pkt.SanityCheck())
+
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, SignOutcome(SignSuccesful), res)
+
+	err = MaybeFinalizeAll(pkt)
+	require.NoError(t, err)
+
+	tx, err := Extract(pkt)
+	require.NoError(t, err)
+	require.Equal(t, uint32(800_000), tx.LockTime)
+}
+
+// TestV2ExtractMultipleInputsOutputs verifies Extract works with multiple
+// inputs and outputs on a v2 packet.
+func TestV2ExtractMultipleInputsOutputs(t *testing.T) {
+	pubKeyHash := btcutil.Hash160(testPub1)
+	scriptPubKey, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_0).
+		AddData(pubKeyHash).
+		Script()
+	require.NoError(t, err)
+
+	txid1 := chainhash.HashH([]byte("multi-in-1"))
+	txid2 := chainhash.HashH([]byte("multi-in-2"))
+	idx0 := uint32(0)
+	idx1 := uint32(1)
+	outAmt1 := int64(30_000)
+	outAmt2 := int64(15_000)
+	outScript := []byte{0x51}
+
+	pkt := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{
+			{
+				PreviousTxID: &txid1,
+				OutputIndex:  &idx0,
+				WitnessUtxo: &wire.TxOut{
+					Value:    50_000,
+					PkScript: scriptPubKey,
+				},
+				PartialSigs:     []*PartialSig{},
+				Bip32Derivation: []*Bip32Derivation{},
+			},
+			{
+				PreviousTxID: &txid2,
+				OutputIndex:  &idx1,
+				WitnessUtxo: &wire.TxOut{
+					Value:    25_000,
+					PkScript: scriptPubKey,
+				},
+				PartialSigs:     []*PartialSig{},
+				Bip32Derivation: []*Bip32Derivation{},
+			},
+		},
+		Outputs: []POutput{
+			{Amount: &outAmt1, Script: outScript},
+			{Amount: &outAmt2, Script: outScript},
+		},
+	}
+	require.NoError(t, pkt.SanityCheck())
+
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	// Sign both inputs.
+	for i := 0; i < 2; i++ {
+		res, err := u.Sign(i, testSig1, testPub1, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, SignOutcome(SignSuccesful), res)
+	}
+
+	err = MaybeFinalizeAll(pkt)
+	require.NoError(t, err)
+
+	tx, err := Extract(pkt)
+	require.NoError(t, err)
+	require.Len(t, tx.TxIn, 2)
+	require.Len(t, tx.TxOut, 2)
+
+	// Verify prevout references.
+	require.Equal(t, txid1, tx.TxIn[0].PreviousOutPoint.Hash)
+	require.Equal(t, txid2, tx.TxIn[1].PreviousOutPoint.Hash)
+
+	// Verify output amounts.
+	require.Equal(t, int64(30_000), tx.TxOut[0].Value)
+	require.Equal(t, int64(15_000), tx.TxOut[1].Value)
+
+	// Both witnesses populated.
+	for i := 0; i < 2; i++ {
+		require.NotNil(t, tx.TxIn[i].Witness)
+		require.Len(t, tx.TxIn[i].Witness, 2)
+	}
+}
+
+// TestBoundsCheckSign verifies that Sign returns an error (not a panic)
+// for negative and out-of-range input indexes.
+func TestBoundsCheckSign(t *testing.T) {
+	pkt := makeV2WithWitnessUtxo(t, nil)
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	for _, idx := range []int{-1, 1, 100} {
+		res, err := u.Sign(idx, testSig1, testPub1, nil, nil)
+		require.ErrorIs(t, err, ErrInputIndexOutOfBounds, "index %d", idx)
+		require.Equal(t, SignOutcome(SignInvalid), res, "index %d", idx)
+	}
+}
+
+// TestBoundsCheckFinalize verifies that Finalize and MaybeFinalize return
+// errors for invalid indexes instead of panicking.
+func TestBoundsCheckFinalize(t *testing.T) {
+	pkt := makeV2WithWitnessUtxo(t, nil)
+
+	for _, idx := range []int{-1, 1, 100} {
+		err := Finalize(pkt, idx)
+		require.ErrorIs(t, err, ErrInputIndexOutOfBounds, "Finalize index %d", idx)
+
+		_, err = MaybeFinalize(pkt, idx)
+		require.ErrorIs(t, err, ErrInputIndexOutOfBounds, "MaybeFinalize index %d", idx)
+	}
+}
+
+// TestBoundsCheckUpdater verifies that Updater methods return errors for
+// invalid indexes instead of panicking.
+func TestBoundsCheckUpdater(t *testing.T) {
+	pkt := makeV2WithWitnessUtxo(t, nil)
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	for _, idx := range []int{-1, 1} {
+		require.ErrorIs(t,
+			u.AddInNonWitnessUtxo(nil, idx),
+			ErrInputIndexOutOfBounds,
+		)
+		require.ErrorIs(t,
+			u.AddInWitnessUtxo(nil, idx),
+			ErrInputIndexOutOfBounds,
+		)
+		require.ErrorIs(t,
+			u.AddInSighashType(0, idx),
+			ErrInputIndexOutOfBounds,
+		)
+		require.ErrorIs(t,
+			u.AddInRedeemScript(nil, idx),
+			ErrInputIndexOutOfBounds,
+		)
+		require.ErrorIs(t,
+			u.AddInWitnessScript(nil, idx),
+			ErrInputIndexOutOfBounds,
+		)
+		require.ErrorIs(t,
+			u.AddInBip32Derivation(0, nil, nil, idx),
+			ErrInputIndexOutOfBounds,
+		)
+	}
+
+	// Output index bounds.
+	for _, idx := range []int{-1, 1} {
+		require.ErrorIs(t,
+			u.AddOutBip32Derivation(0, nil, nil, idx),
+			ErrOutputIndexOutOfBounds,
+		)
+		require.ErrorIs(t,
+			u.AddOutRedeemScript(nil, idx),
+			ErrOutputIndexOutOfBounds,
+		)
+		require.ErrorIs(t,
+			u.AddOutWitnessScript(nil, idx),
+			ErrOutputIndexOutOfBounds,
+		)
+	}
+}
+
 // ptrU8 returns a pointer to the given uint8 value.
 func ptrU8(v uint8) *uint8 { return &v }

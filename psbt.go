@@ -141,6 +141,14 @@ var (
 	// script witness given is not supported by this codebase, or is
 	// otherwise not valid.
 	ErrUnsupportedScriptType = errors.New("Unsupported script type")
+
+	// ErrInputIndexOutOfBounds indicates that the caller supplied an
+	// input index that is negative or >= the number of inputs.
+	ErrInputIndexOutOfBounds = errors.New("input index out of bounds")
+
+	// ErrOutputIndexOutOfBounds indicates that the caller supplied an
+	// output index that is negative or >= the number of outputs.
+	ErrOutputIndexOutOfBounds = errors.New("output index out of bounds")
 )
 
 // Unknown is a struct encapsulating a key-value pair for which the key type is

@@ -41,8 +41,8 @@ func NewUpdater(p *Packet) (*Updater, error) {
 // source of the corresponding prevOut), and the input index. If addition of
 // this key-value pair to the Psbt fails, an error is returned.
 func (u *Updater) AddInNonWitnessUtxo(tx *wire.MsgTx, inIndex int) error {
-	if inIndex > len(u.Upsbt.Inputs)-1 {
-		return ErrInvalidPrevOutNonWitnessTransaction
+	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
+		return ErrInputIndexOutOfBounds
 	}
 
 	u.Upsbt.Inputs[inIndex].NonWitnessUtxo = tx
@@ -60,8 +60,8 @@ func (u *Updater) AddInNonWitnessUtxo(tx *wire.MsgTx, inIndex int) error {
 // the output information is sufficient, and the input index. If addition of
 // this key-value pair to the Psbt fails, an error is returned.
 func (u *Updater) AddInWitnessUtxo(txout *wire.TxOut, inIndex int) error {
-	if inIndex > len(u.Upsbt.Inputs)-1 {
-		return ErrInvalidPsbtFormat
+	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
+		return ErrInputIndexOutOfBounds
 	}
 
 	u.Upsbt.Inputs[inIndex].WitnessUtxo = txout
@@ -83,6 +83,10 @@ func (u *Updater) AddInWitnessUtxo(txout *wire.TxOut, inIndex int) error {
 // NOTE: This function does *not* validate the ECDSA signature itself.
 func (u *Updater) addPartialSignature(inIndex int, sig []byte,
 	pubkey []byte) error {
+
+	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
+		return ErrInputIndexOutOfBounds
+	}
 
 	partialSig := PartialSig{
 		PubKey: pubkey, Signature: sig,
@@ -245,6 +249,10 @@ func (u *Updater) addPartialSignature(inIndex int, sig []byte,
 func (u *Updater) AddInSighashType(sighashType txscript.SigHashType,
 	inIndex int) error {
 
+	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
+		return ErrInputIndexOutOfBounds
+	}
+
 	u.Upsbt.Inputs[inIndex].SighashType = sighashType
 
 	if err := u.Upsbt.SanityCheck(); err != nil {
@@ -259,6 +267,10 @@ func (u *Updater) AddInSighashType(sighashType txscript.SigHashType,
 // Psbt fails.
 func (u *Updater) AddInRedeemScript(redeemScript []byte,
 	inIndex int) error {
+
+	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
+		return ErrInputIndexOutOfBounds
+	}
 
 	u.Upsbt.Inputs[inIndex].RedeemScript = redeemScript
 
@@ -275,6 +287,10 @@ func (u *Updater) AddInRedeemScript(redeemScript []byte,
 // Psbt fails.
 func (u *Updater) AddInWitnessScript(witnessScript []byte,
 	inIndex int) error {
+
+	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
+		return ErrInputIndexOutOfBounds
+	}
 
 	u.Upsbt.Inputs[inIndex].WitnessScript = witnessScript
 
@@ -294,6 +310,10 @@ func (u *Updater) AddInWitnessScript(witnessScript []byte,
 // returned if addition of this key-value pair to the Psbt fails.
 func (u *Updater) AddInBip32Derivation(masterKeyFingerprint uint32,
 	bip32Path []uint32, pubKeyData []byte, inIndex int) error {
+
+	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
+		return ErrInputIndexOutOfBounds
+	}
 
 	bip32Derivation := Bip32Derivation{
 		PubKey:               pubKeyData,
@@ -333,6 +353,10 @@ func (u *Updater) AddInBip32Derivation(masterKeyFingerprint uint32,
 func (u *Updater) AddOutBip32Derivation(masterKeyFingerprint uint32,
 	bip32Path []uint32, pubKeyData []byte, outIndex int) error {
 
+	if outIndex < 0 || outIndex >= len(u.Upsbt.Outputs) {
+		return ErrOutputIndexOutOfBounds
+	}
+
 	bip32Derivation := Bip32Derivation{
 		PubKey:               pubKeyData,
 		MasterKeyFingerprint: masterKeyFingerprint,
@@ -366,6 +390,10 @@ func (u *Updater) AddOutBip32Derivation(masterKeyFingerprint uint32,
 func (u *Updater) AddOutRedeemScript(redeemScript []byte,
 	outIndex int) error {
 
+	if outIndex < 0 || outIndex >= len(u.Upsbt.Outputs) {
+		return ErrOutputIndexOutOfBounds
+	}
+
 	u.Upsbt.Outputs[outIndex].RedeemScript = redeemScript
 
 	if err := u.Upsbt.SanityCheck(); err != nil {
@@ -379,6 +407,10 @@ func (u *Updater) AddOutRedeemScript(redeemScript []byte,
 // the output at index outIndex.
 func (u *Updater) AddOutWitnessScript(witnessScript []byte,
 	outIndex int) error {
+
+	if outIndex < 0 || outIndex >= len(u.Upsbt.Outputs) {
+		return ErrOutputIndexOutOfBounds
+	}
 
 	u.Upsbt.Outputs[outIndex].WitnessScript = witnessScript
 

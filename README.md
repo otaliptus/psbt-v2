@@ -9,8 +9,10 @@ This is an ongoing Go implementation of [BIP-370 (PSBTv2)](https://github.com/bi
 | **Parser / Serializer** | Done — v0 + v2, trailing-byte rejection, allocation caps |
 | **Creator** (`NewV2`) | Done — builds v2 packets with defensive copying |
 | **Constructor** | (kinda) Done — `TxModifiable` bitfield, signature guards |
-| **Updater / Signer / Finalizer** | Not yet |
-| **Extractor** | v0 only — needs wiring |
+| **Updater** | Done — v2-aware accessors for prevout/sequence |
+| **Signer** | Done — updates `TxModifiable` flags per BIP-370 |
+| **Finalizer** | Done — preserves v2 fields, iterates `p.Inputs` |
+| **Extractor** | Done — reconstructs tx from v2 per-input/output fields |
 
 So far it has:
 
@@ -18,6 +20,11 @@ So far it has:
 - **45 official BIP-370 test vectors** for parse/validation so far (not fully roundtrip yet)
 - **Locktime determination** — implements the full BIP-370 algorithm (height vs time, max-across-inputs, fallback)
 - **Mutation safety** — Constructor rejects modifications when signatures exist or SIGHASH_SINGLE pairing would break
+
+What's left are:
+- good v0 <-> v2 conversion utils
+- some more utils
+- checking for overkills & oversimplifications (a cleanup todo)
 
 ### Usage
 

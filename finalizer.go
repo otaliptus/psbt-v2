@@ -174,6 +174,10 @@ func isFinalizable(p *Packet, inIndex int) bool {
 // returning true with no error if it succeeds, OR if the input has already
 // been finalized.
 func MaybeFinalize(p *Packet, inIndex int) (bool, error) {
+	if inIndex < 0 || inIndex >= len(p.Inputs) {
+		return false, ErrInputIndexOutOfBounds
+	}
+
 	if isFinalized(p, inIndex) {
 		return true, nil
 	}
@@ -210,6 +214,10 @@ func MaybeFinalizeAll(p *Packet) error {
 // are left intact as they may be needed for validation (?).  If there is any
 // invalid or incomplete data, an error is returned.
 func Finalize(p *Packet, inIndex int) error {
+	if inIndex < 0 || inIndex >= len(p.Inputs) {
+		return ErrInputIndexOutOfBounds
+	}
+
 	pInput := p.Inputs[inIndex]
 
 	// Depending on the UTXO type, we either attempt to finalize it as a
@@ -263,6 +271,17 @@ func checkFinalScriptSigWitness(p *Packet, inIndex int) bool {
 	}
 
 	return false
+}
+
+// carryV2InputFields copies v2-required fields (PreviousTxID, OutputIndex,
+// Sequence, locktimes) from src to dst. This preserves them when a finalize
+// function replaces the input with a fresh PsbtInput.
+func carryV2InputFields(src, dst *PInput) {
+	dst.PreviousTxID = src.PreviousTxID
+	dst.OutputIndex = src.OutputIndex
+	dst.Sequence = src.Sequence
+	dst.RequiredTimeLocktime = src.RequiredTimeLocktime
+	dst.RequiredHeightLocktime = src.RequiredHeightLocktime
 }
 
 // finalizeNonWitnessInput attempts to create a PsbtInFinalScriptSig field for
@@ -356,6 +375,7 @@ func finalizeNonWitnessInput(p *Packet, inIndex int) error {
 	// other than non-witness utxo (00) and finaliscriptsig (07)
 	newInput := NewPsbtInput(pInput.NonWitnessUtxo, nil)
 	newInput.FinalScriptSig = sigScript
+	carryV2InputFields(&pInput, newInput)
 
 	// Overwrite the entry in the input list at the correct index. Note
 	// that this removes all the other entries in the list for this input
@@ -498,6 +518,7 @@ func finalizeWitnessInput(p *Packet, inIndex int) error {
 	}
 
 	newInput.FinalScriptWitness = serializedWitness
+	carryV2InputFields(&pInput, newInput)
 
 	// Finally, we overwrite the entry in the input list at the correct
 	// index.
@@ -595,6 +616,7 @@ func finalizeTaprootInput(p *Packet, inIndex int) error {
 	// finalscriptwitness (08).
 	newInput := NewPsbtInput(nil, pInput.WitnessUtxo)
 	newInput.FinalScriptWitness = serializedWitness
+	carryV2InputFields(pInput, newInput)
 
 	// Finally, we overwrite the entry in the input list at the correct
 	// index.
