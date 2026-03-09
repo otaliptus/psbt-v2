@@ -111,8 +111,14 @@ func isFinalizableLegacyInput(p *Packet, pInput *PInput, inIndex int) bool {
 
 	// Otherwise, we'll verify that we only have a RedeemScript if the prev
 	// output script is P2SH.
-	outIndex := p.UnsignedTx.TxIn[inIndex].PreviousOutPoint.Index
-	if txscript.IsPayToScriptHash(pInput.NonWitnessUtxo.TxOut[outIndex].PkScript) {
+	prevOut, err := p.inputPrevOutpoint(inIndex)
+	if err != nil {
+		return false
+	}
+	if int(prevOut.Index) >= len(pInput.NonWitnessUtxo.TxOut) {
+		return false
+	}
+	if txscript.IsPayToScriptHash(pInput.NonWitnessUtxo.TxOut[prevOut.Index].PkScript) {
 		if pInput.RedeemScript == nil {
 			return false
 		}
@@ -186,7 +192,7 @@ func MaybeFinalize(p *Packet, inIndex int) (bool, error) {
 // MaybeFinalizeAll attempts to finalize all inputs of the psbt.Packet that are
 // not already finalized, and returns an error if it fails to do so.
 func MaybeFinalizeAll(p *Packet) error {
-	for i := range p.UnsignedTx.TxIn {
+	for i := range p.Inputs {
 		success, err := MaybeFinalize(p, i)
 		if err != nil || !success {
 			return err

@@ -115,9 +115,14 @@ func (u *Updater) Sign(inIndex int, sig []byte, pubKey []byte,
 	// output.
 	default:
 		if pInput.WitnessUtxo == nil {
-			txIn := u.Upsbt.UnsignedTx.TxIn[inIndex]
-			outIndex := txIn.PreviousOutPoint.Index
-			script := pInput.NonWitnessUtxo.TxOut[outIndex].PkScript
+			prevOut, err := u.Upsbt.inputPrevOutpoint(inIndex)
+			if err != nil {
+				return SignInvalid, err
+			}
+			if int(prevOut.Index) >= len(pInput.NonWitnessUtxo.TxOut) {
+				return SignInvalid, ErrInvalidPrevOutNonWitnessTransaction
+			}
+			script := pInput.NonWitnessUtxo.TxOut[prevOut.Index].PkScript
 
 			if txscript.IsWitnessProgram(script) {
 				err := nonWitnessToWitness(u.Upsbt, inIndex)
@@ -141,8 +146,14 @@ func (u *Updater) Sign(inIndex int, sig []byte, pubKey []byte,
 // NonWitnessUtxo field with a WitnessUtxo field. See
 // https://github.com/bitcoin/bitcoin/pull/14197.
 func nonWitnessToWitness(p *Packet, inIndex int) error {
-	outIndex := p.UnsignedTx.TxIn[inIndex].PreviousOutPoint.Index
-	txout := p.Inputs[inIndex].NonWitnessUtxo.TxOut[outIndex]
+	prevOut, err := p.inputPrevOutpoint(inIndex)
+	if err != nil {
+		return err
+	}
+	if int(prevOut.Index) >= len(p.Inputs[inIndex].NonWitnessUtxo.TxOut) {
+		return ErrInvalidPrevOutNonWitnessTransaction
+	}
+	txout := p.Inputs[inIndex].NonWitnessUtxo.TxOut[prevOut.Index]
 
 	// TODO(guggero): For segwit v1, we'll want to remove the NonWitnessUtxo
 	// from the packet. For segwit v0 it is unsafe to only rely on the

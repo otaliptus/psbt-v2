@@ -3,10 +3,13 @@ package psbt
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"strings"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/stretchr/testify/require"
 )
@@ -657,11 +660,11 @@ func TestBIP370InvalidV2LocktimeBoundary(t *testing.T) {
 // TestBIP370ValidV2 tests all valid v2 vectors from the BIP-370 spec.
 func TestBIP370ValidV2(t *testing.T) {
 	vectors := []struct {
-		name           string
-		vector         string
-		numInputs      int
-		numOutputs     int
-		txModifiable   *uint8 // nil means field absent
+		name         string
+		vector       string
+		numInputs    int
+		numOutputs   int
+		txModifiable *uint8 // nil means field absent
 	}{
 		{"required_fields_only", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEOIAsK2SFBnByHGXNdctxzn56p4GONH+TB7vD5lECEgV/IAQ8EAAAAAAABAwgACK8vAAAAAAEEFgAUxDD2TEdW2jENvRoIVXLvKZkmJywAAQMIi73rCwAAAAABBBYAFE3Rk6yWSlasG54cyoRU/i9HT4UTAA==", 1, 2, nil},
 		{"updated", "cHNidP8BAgQCAAAAAQQBAQEFAQIB+wQCAAAAAAEAUgIAAAABwaolbiFLlqGCL5PeQr/ztfP/jQUZMG41FddRWl6AWxIAAAAAAP////8BGMaaOwAAAAAWABSwo68UQghBJpPKfRZoUrUtsK7wbgAAAAABAR8Yxpo7AAAAABYAFLCjrxRCCEEmk8p9FmhStS2wrvBuAQ4gCwrZIUGcHIcZc11y3HOfnqngY40f5MHu8PmUQISBX8gBDwQAAAAAACICAtYB+EhGpnVfd2vgDj2d6PsQrMk1+4PEX7AWLUytWreSGPadhz5UAACAAQAAgAAAAIAAAAAAKgAAAAEDCAAIry8AAAAAAQQWABTEMPZMR1baMQ29GghVcu8pmSYnLAAiAgLjb7/1PdU0Bwz4/TlmFGgPNXqbhdtzQL8c+nRdKtezQBj2nYc+VAAAgAEAAIAAAACAAQAAAGQAAAABAwiLvesLAAAAAAEEFgAUTdGTrJZKVqwbnhzKhFT+L0dPhRMA", 1, 2, nil},
@@ -2117,6 +2120,284 @@ func minimalUnsignedTxBytes(t *testing.T) []byte {
 	require.NoError(t, tx.SerializeNoWitness(&buf))
 
 	return buf.Bytes()
+}
+
+// /////////////////////////////////////////////////////////////////////////////
+// PSBTv2: lifecycle tests (updater → signer → finalizer)
+// /////////////////////////////////////////////////////////////////////////////
+
+// testSig1 and testPub1 are format-valid DER sig + compressed pubkey borrowed
+// from Core's regtest for use in v2 lifecycle tests.
+//
+// The sig is NOT cryptographically valid
+// for any particular input, but passes the format
+// checks in addPartialSignature.
+var (
+	testSig1, _ = hex.DecodeString(
+		"304402200da03ac9890f5d724c42c83c2a62844c08425a274f1a5bca50dcde41" +
+			"26eb20dd02205278897b65cb8e390a0868c9582133c7157b2ad3e81c1c70d8" +
+			"fbd65f51a5658b01",
+	)
+	testPub1, _ = hex.DecodeString(
+		"024d6b24f372dd4551277c8df4ecc0655101e11c22894c8e05a3468409c865a72c",
+	)
+)
+
+// makeV2WithWitnessUtxo builds a minimal v2 Packet with a single P2WPKH input
+// that has a WitnessUtxo attached, suitable for testing the sign/finalize path.
+func makeV2WithWitnessUtxo(t *testing.T, mod *uint8) *Packet {
+	t.Helper()
+
+	txid := chainhash.HashH([]byte("test-prevout"))
+	idx := uint32(0)
+	amt := int64(50_000)
+	// P2WPKH scriptPubKey: OP_0 <HASH160(pubkey)>
+	pubKeyHash := btcutil.Hash160(testPub1)
+	scriptPubKey, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_0).
+		AddData(pubKeyHash).
+		Script()
+	require.NoError(t, err)
+
+	outAmt := int64(40_000)
+	outScript := []byte{0x51} // OP_TRUE
+
+	pkt := &Packet{
+		Version:      2,
+		TxVersion:    2,
+		TxModifiable: mod,
+		Inputs: []PInput{{
+			PreviousTxID: &txid,
+			OutputIndex:  &idx,
+			WitnessUtxo: &wire.TxOut{
+				Value:    amt,
+				PkScript: scriptPubKey,
+			},
+			PartialSigs:     []*PartialSig{},
+			Bip32Derivation: []*Bip32Derivation{},
+		}},
+		Outputs: []POutput{{
+			Amount: &outAmt,
+			Script: outScript,
+		}},
+	}
+	require.NoError(t, pkt.SanityCheck())
+	return pkt
+}
+
+// TestV2UpdaterSignDoesNotPanic verifies that the Updater.Sign path works on
+// a v2 packet where UnsignedTx is nil, exercising the accessor migration.
+func TestV2UpdaterSignDoesNotPanic(t *testing.T) {
+	pkt := makeV2WithWitnessUtxo(t, nil)
+	require.Nil(t, pkt.UnsignedTx) // v2 has no UnsignedTx
+
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, SignOutcome(SignSuccesful), res)
+	require.Len(t, pkt.Inputs[0].PartialSigs, 1)
+}
+
+// TestV2SignerUpdatesTxModifiable verifies that after signing a v2 packet,
+// the TxModifiable flags are updated per BIP-370 sighash rules.
+func TestV2SignerUpdatesTxModifiable(t *testing.T) {
+	tests := []struct {
+		name         string
+		sighashType  txscript.SigHashType
+		initialFlags uint8
+		expectedMask uint8 // expected flags after signing
+	}{
+		{
+			// SIGHASH_ALL (default): clear bits 0 and 1.
+			name:         "sighash_all_clears_inputs_outputs",
+			sighashType:  txscript.SigHashAll,
+			initialFlags: 0x03, // inputs + outputs modifiable
+			expectedMask: 0x00,
+		},
+		{
+			// SIGHASH_NONE: clear bit 0, keep bit 1.
+			name:         "sighash_none_clears_inputs_only",
+			sighashType:  txscript.SigHashNone,
+			initialFlags: 0x03,
+			expectedMask: 0x02,
+		},
+		{
+			// SIGHASH_SINGLE: clear bit 0, clear bit 1, set bit 2.
+			name:         "sighash_single_sets_bit2",
+			sighashType:  txscript.SigHashSingle,
+			initialFlags: 0x03,
+			expectedMask: 0x04,
+		},
+		{
+			// SIGHASH_ALL|ANYONECANPAY: keep bit 0, clear bit 1.
+			name:         "sighash_all_acp_clears_outputs_only",
+			sighashType:  txscript.SigHashAll | txscript.SigHashAnyOneCanPay,
+			initialFlags: 0x03,
+			expectedMask: 0x01,
+		},
+		{
+			// SIGHASH_NONE|ANYONECANPAY: keep bits 0 and 1.
+			name:         "sighash_none_acp_clears_nothing",
+			sighashType:  txscript.SigHashNone | txscript.SigHashAnyOneCanPay,
+			initialFlags: 0x03,
+			expectedMask: 0x03,
+		},
+		{
+			// SIGHASH_SINGLE|ANYONECANPAY: keep bit 0, clear bit 1, set bit 2.
+			name:         "sighash_single_acp_sets_bit2_keeps_inputs",
+			sighashType:  txscript.SigHashSingle | txscript.SigHashAnyOneCanPay,
+			initialFlags: 0x03,
+			expectedMask: 0x05, // bit 0 + bit 2
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := tc.initialFlags
+			pkt := makeV2WithWitnessUtxo(t, &flags)
+
+			// Set the sighash type on the input.
+			pkt.Inputs[0].SighashType = tc.sighashType
+
+			// Build a signature with the matching trailing sighash byte.
+			sig := make([]byte, len(testSig1))
+			copy(sig, testSig1)
+			sig[len(sig)-1] = byte(tc.sighashType)
+
+			u, err := NewUpdater(pkt)
+			require.NoError(t, err)
+
+			res, err := u.Sign(0, sig, testPub1, nil, nil)
+			require.NoError(t, err)
+			require.Equal(t, SignOutcome(SignSuccesful), res)
+
+			require.NotNil(t, pkt.TxModifiable)
+			require.Equal(t, tc.expectedMask, *pkt.TxModifiable,
+				"TxModifiable flags mismatch after signing")
+		})
+	}
+}
+
+// TestV2SignerNoFlagUpdateForV0 confirms that signing a v0 packet does NOT
+// touch TxModifiable (which doesn't exist in v0).
+func TestV2SignerNoFlagUpdateForV0(t *testing.T) {
+	// Use an existing v0 PSBT from the Core test vectors.
+	imported := "cHNidP8BAJwCAAAAAjaoF6eKeGsPiDQxxqqhFDfHWjBtZzRqmaZmvyCVWZ5JAQAAAAD/////RhypNiFfnQSMNpo0SGsgIvDOyMQFAYEHZXD5jp4kCrUAAAAAAP////8CgCcSjAAAAAAXqRQFWy8ScSkkhlGMwfOnx15YwRzApofwX5MDAAAAABepFAt4TyLfGnL9QY6GLYHbpSQj+QclhwAAAAAAAAAAAA=="
+	pkt, err := NewFromRawBytes(strings.NewReader(imported), true)
+	require.NoError(t, err)
+	require.Nil(t, pkt.TxModifiable)
+
+	// Add witness UTXO and sign.
+	fundingTxHex := "02000000014f2cbac7d7691fafca30313097d79be9e78aa6670752fcb1fc15508e77586efb000000004847304402201b5568d7cab977ae0892840b779d84e36d62e42fd93b95e648aaebeacd2577d602201d2ebda2b0cddfa0c1a71d3cbcb602e7c9c860a41ed8b4d18d40c92ccbe92aed01feffffff028c636f91000000001600147447b6d7e6193499565779c8eb5184fcfdfee6ef00879303000000001600149e88f2828a074ebf64af23c2168d1816258311d72d010000"
+	fundBytes, err := hex.DecodeString(fundingTxHex)
+	require.NoError(t, err)
+	txFund := wire.NewMsgTx(2)
+	require.NoError(t, txFund.Deserialize(bytes.NewReader(fundBytes)))
+
+	u := &Updater{Upsbt: pkt}
+	require.NoError(t, u.AddInWitnessUtxo(txFund.TxOut[1], 0))
+
+	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, SignOutcome(SignSuccesful), res)
+
+	// v0 must not have TxModifiable set.
+	require.Nil(t, pkt.TxModifiable)
+}
+
+// TestV2MaybeFinalizeAllDoesNotPanic verifies MaybeFinalizeAll iterates
+// over p.Inputs (not p.UnsignedTx.TxIn) for v2 packets.
+func TestV2MaybeFinalizeAllDoesNotPanic(t *testing.T) {
+	pkt := makeV2WithWitnessUtxo(t, nil)
+	require.Nil(t, pkt.UnsignedTx)
+
+	// MaybeFinalizeAll should not panic. It will return an error because
+	// the input has no signatures, but the point is it doesn't panic.
+	err := MaybeFinalizeAll(pkt)
+	require.Error(t, err)
+}
+
+// TestV2AddPartialSigPrevOutValidation verifies that the NonWitnessUtxo
+// validation in addPartialSignature uses the v2-safe accessor.
+func TestV2AddPartialSigPrevOutValidation(t *testing.T) {
+	// Build a v2 packet with a NonWitnessUtxo instead of WitnessUtxo.
+	idx := uint32(1)
+	outAmt := int64(40_000)
+	outScript := []byte{0x51}
+
+	// Create a funding tx that the NonWitnessUtxo will point to.
+	fundTx := wire.NewMsgTx(2)
+	fundTx.AddTxIn(&wire.TxIn{})
+	fundTx.AddTxOut(&wire.TxOut{Value: 10_000, PkScript: []byte{0x76}})
+
+	// P2PKH output at index 1.
+	pubKeyHash := make([]byte, 20)
+	copy(pubKeyHash, testPub1[1:21])
+	p2pkhScript, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_DUP).
+		AddOp(txscript.OP_HASH160).
+		AddData(pubKeyHash).
+		AddOp(txscript.OP_EQUALVERIFY).
+		AddOp(txscript.OP_CHECKSIG).
+		Script()
+	require.NoError(t, err)
+	fundTx.AddTxOut(&wire.TxOut{Value: 50_000, PkScript: p2pkhScript})
+
+	// The PreviousTxID must match the funding tx hash.
+	txid := fundTx.TxHash()
+
+	pkt := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{{
+			PreviousTxID:    &txid,
+			OutputIndex:     &idx,
+			NonWitnessUtxo:  fundTx,
+			PartialSigs:     []*PartialSig{},
+			Bip32Derivation: []*Bip32Derivation{},
+		}},
+		Outputs: []POutput{{
+			Amount: &outAmt,
+			Script: outScript,
+		}},
+	}
+	require.NoError(t, pkt.SanityCheck())
+	require.Nil(t, pkt.UnsignedTx)
+
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	// Sign should work — the accessor resolves the prevout from v2 fields.
+	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, SignOutcome(SignSuccesful), res)
+
+	// Now verify with a mismatched txid — should fail validation.
+	wrongTxid := chainhash.HashH([]byte("wrong-txid"))
+	pkt2 := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{{
+			PreviousTxID:    &wrongTxid,
+			OutputIndex:     &idx,
+			NonWitnessUtxo:  fundTx,
+			PartialSigs:     []*PartialSig{},
+			Bip32Derivation: []*Bip32Derivation{},
+		}},
+		Outputs: []POutput{{
+			Amount: &outAmt,
+			Script: outScript,
+		}},
+	}
+	require.NoError(t, pkt2.SanityCheck())
+
+	u2, err := NewUpdater(pkt2)
+	require.NoError(t, err)
+
+	_, err = u2.Sign(0, testSig1, testPub1, nil, nil)
+	require.ErrorIs(t, err, ErrInvalidSignatureForInput)
 }
 
 // ptrU8 returns a pointer to the given uint8 value.

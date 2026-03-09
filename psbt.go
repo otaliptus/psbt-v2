@@ -951,6 +951,9 @@ func (p *Packet) GetTxFee() (btcutil.Amount, error) {
 // For PSBTv2, returns error if required fields are missing
 func (p *Packet) inputPrevOutpoint(i int) (wire.OutPoint, error) {
 	if p.Version == 0 {
+		if p.UnsignedTx == nil || i >= len(p.UnsignedTx.TxIn) {
+			return wire.OutPoint{}, ErrInvalidPsbtFormat
+		}
 		return p.UnsignedTx.TxIn[i].PreviousOutPoint, nil
 	}
 
@@ -967,6 +970,9 @@ func (p *Packet) inputPrevOutpoint(i int) (wire.OutPoint, error) {
 // For PSBTv2, returns wire.MaxTxInSequenceNum if Sequence is not set
 func (p *Packet) inputSequence(i int) uint32 {
 	if p.Version == 0 {
+		if p.UnsignedTx == nil || i >= len(p.UnsignedTx.TxIn) {
+			return wire.MaxTxInSequenceNum
+		}
 		return p.UnsignedTx.TxIn[i].Sequence
 	}
 	if p.Inputs[i].Sequence != nil {
@@ -979,6 +985,9 @@ func (p *Packet) inputSequence(i int) uint32 {
 // For PSBTv2, returns InvalidPSBT if the amount is missing
 func (p *Packet) outputAmount(i int) (int64, error) {
 	if p.Version == 0 {
+		if p.UnsignedTx == nil || i >= len(p.UnsignedTx.TxOut) {
+			return 0, ErrInvalidPsbtFormat
+		}
 		return p.UnsignedTx.TxOut[i].Value, nil
 	}
 	if p.Outputs[i].Amount == nil {
@@ -991,6 +1000,9 @@ func (p *Packet) outputAmount(i int) (int64, error) {
 // For PSBTv2, returns InvalidPSBT if the Script is missing
 func (p *Packet) outputScript(i int) ([]byte, error) {
 	if p.Version == 0 {
+		if p.UnsignedTx == nil || i >= len(p.UnsignedTx.TxOut) {
+			return nil, ErrInvalidPsbtFormat
+		}
 		return p.UnsignedTx.TxOut[i].PkScript, nil
 	}
 	if p.Outputs[i].Script == nil {
