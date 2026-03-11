@@ -335,45 +335,41 @@ func readTxOut(txout []byte) (*wire.TxOut, error) {
 	return wire.NewTxOut(int64(valueSer), scriptPubKey), nil
 }
 
+// checkSupportedVersion returns an error if the packet version is not one
+// of the recognized PSBT versions (0 or 2). This prevents public helpers
+// from silently accepting structurally unknown packets.
+func checkSupportedVersion(packet *Packet) error {
+	if packet == nil {
+		return fmt.Errorf("PSBT packet cannot be nil")
+	}
+	switch packet.Version {
+	case 0, 2:
+		return nil
+	default:
+		return fmt.Errorf("unsupported PSBT version %d", packet.Version)
+	}
+}
+
 // SumUtxoInputValues tries to extract the sum of all inputs specified in the
 // UTXO fields of the PSBT. An error is returned if an input is specified that
 // does not contain any UTXO information.
+//
+// Works for both v0 and v2 packets. Structural validation is delegated to
+// VerifyInputOutputLen, and prevout resolution uses the version-aware
+// inputUtxoValue accessor so v2 packets (where UnsignedTx is nil) are handled
+// without a separate code path.
 func SumUtxoInputValues(packet *Packet) (int64, error) {
-	// We take the TX ins of the unsigned TX as the truth for how many
-	// inputs there should be, as the fields in the extra data part of the
-	// PSBT can be empty.
-	if len(packet.UnsignedTx.TxIn) != len(packet.Inputs) {
-		return 0, fmt.Errorf("TX input length doesn't match PSBT " +
-			"input length")
+	if err := VerifyInputOutputLen(packet, false, false); err != nil {
+		return 0, err
 	}
 
 	inputSum := int64(0)
-	for idx, in := range packet.Inputs {
-		switch {
-		case in.WitnessUtxo != nil:
-			// Witness UTXOs only need to reference the TxOut.
-			inputSum += in.WitnessUtxo.Value
-
-		case in.NonWitnessUtxo != nil:
-			// Non-witness UTXOs reference to the whole transaction
-			// the UTXO resides in.
-			utxOuts := in.NonWitnessUtxo.TxOut
-			txIn := packet.UnsignedTx.TxIn[idx]
-
-			// Check that utxOuts actually has enough space to
-			// contain the previous outpoint's index.
-			opIdx := txIn.PreviousOutPoint.Index
-			if opIdx >= uint32(len(utxOuts)) {
-				return 0, fmt.Errorf("input %d has malformed "+
-					"TxOut field", idx)
-			}
-
-			inputSum += utxOuts[txIn.PreviousOutPoint.Index].Value
-
-		default:
-			return 0, fmt.Errorf("input %d has no UTXO information",
-				idx)
+	for i := range packet.Inputs {
+		val, err := packet.inputUtxoValue(i)
+		if err != nil {
+			return 0, err
 		}
+		inputSum += val
 	}
 	return inputSum, nil
 }
@@ -421,29 +417,43 @@ func VerifyInputPrevOutpointsEqual(ins1, ins2 []*wire.TxIn) error {
 	return nil
 }
 
-// VerifyInputOutputLen makes sure a packet is non-nil, contains a non-nil wire
-// transaction and that the wire input/output lengths match the partial input/
-// output lengths. A caller also can specify if they expect any inputs and/or
-// outputs to be contained in the packet.
+// VerifyInputOutputLen makes sure a packet is non-nil and that input/output
+// counts are consistent. A caller also can specify if they expect any inputs
+// and/or outputs to be contained in the packet.
+//
+// For v0 packets the wire transaction must be present and its TxIn/TxOut
+// lengths must match the partial input/output slices.
+// For v2 packets (where UnsignedTx is nil) the partial slices are the
+// source of truth - no wire tx cross-check is needed.
 func VerifyInputOutputLen(packet *Packet, needInputs, needOutputs bool) error {
-	if packet == nil || packet.UnsignedTx == nil {
-		return fmt.Errorf("PSBT packet cannot be nil")
+	if err := checkSupportedVersion(packet); err != nil {
+		return err
 	}
 
-	if len(packet.UnsignedTx.TxIn) != len(packet.Inputs) {
-		return fmt.Errorf("invalid PSBT, wire inputs don't match " +
-			"partial inputs")
-	}
-	if len(packet.UnsignedTx.TxOut) != len(packet.Outputs) {
-		return fmt.Errorf("invalid PSBT, wire outputs don't match " +
-			"partial outputs")
+	switch packet.Version {
+	case 0:
+		if packet.UnsignedTx == nil {
+			return fmt.Errorf("v0 PSBT missing UnsignedTx")
+		}
+		if len(packet.UnsignedTx.TxIn) != len(packet.Inputs) {
+			return fmt.Errorf("invalid PSBT, wire inputs don't " +
+				"match partial inputs")
+		}
+		if len(packet.UnsignedTx.TxOut) != len(packet.Outputs) {
+			return fmt.Errorf("invalid PSBT, wire outputs don't " +
+				"match partial outputs")
+		}
+
+	case 2:
+		// v2: no UnsignedTx to cross-check; Inputs/Outputs are the
+		// canonical counts.
 	}
 
-	if needInputs && len(packet.UnsignedTx.TxIn) == 0 {
+	if needInputs && len(packet.Inputs) == 0 {
 		return fmt.Errorf("PSBT packet must contain at least one " +
 			"input")
 	}
-	if needOutputs && len(packet.UnsignedTx.TxOut) == 0 {
+	if needOutputs && len(packet.Outputs) == 0 {
 		return fmt.Errorf("PSBT packet must contain at least one " +
 			"output")
 	}
@@ -458,14 +468,16 @@ func VerifyInputOutputLen(packet *Packet, needInputs, needOutputs bool) error {
 // this means we need to check the previous output pkScript for the specific
 // type and the second reason is that the sighash calculation for taproot inputs
 // include the previous output pkscripts.
+//
+// Works for both v0 and v2 packets - iterates packet.Inputs directly
+// rather than assuming UnsignedTx exists.
 func InputsReadyToSign(packet *Packet) error {
 	err := VerifyInputOutputLen(packet, true, true)
 	if err != nil {
 		return err
 	}
 
-	for i := range packet.UnsignedTx.TxIn {
-		input := packet.Inputs[i]
+	for i, input := range packet.Inputs {
 		if input.NonWitnessUtxo == nil && input.WitnessUtxo == nil {
 			return fmt.Errorf("invalid PSBT, input with index %d "+
 				"missing utxo information", i)

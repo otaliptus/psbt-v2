@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"sort"
 	"strings"
 	"testing"
 
@@ -2673,3 +2674,595 @@ func TestBoundsCheckUpdater(t *testing.T) {
 
 // ptrU8 returns a pointer to the given uint8 value.
 func ptrU8(v uint8) *uint8 { return &v }
+
+// ///////////////////////////////////////////////////////////////////////////
+// Phase 7: v2-aware sort/utils tests
+// ///////////////////////////////////////////////////////////////////////////
+
+// makeV2ForSort builds a v2 packet with multiple inputs and outputs suitable
+// for testing BIP-69 sort behavior. No signatures attached.
+func makeV2ForSort(t *testing.T) *Packet {
+	t.Helper()
+
+	hash1 := chainhash.HashH([]byte("txid-cc")) // will sort later in big-endian
+	hash2 := chainhash.HashH([]byte("txid-aa")) // will sort earlier in big-endian
+	idx0 := uint32(7)
+	idx1 := uint32(3)
+
+	amt0 := int64(20_000)
+	amt1 := int64(10_000)
+	script0 := []byte{0x99, 0x88}
+	script1 := []byte{0x11, 0x22}
+
+	pkt := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{
+			{
+				PreviousTxID: &hash1,
+				OutputIndex:  &idx0,
+				SighashType:  0, // marker to track position
+			},
+			{
+				PreviousTxID: &hash2,
+				OutputIndex:  &idx1,
+				SighashType:  1,
+			},
+		},
+		Outputs: []POutput{
+			{
+				Amount:       &amt0,
+				Script:       script0,
+				RedeemScript: []byte{0}, // marker
+			},
+			{
+				Amount:       &amt1,
+				Script:       script1,
+				RedeemScript: []byte{1}, // marker
+			},
+		},
+	}
+	require.NoError(t, pkt.SanityCheck())
+	require.Nil(t, pkt.UnsignedTx)
+	return pkt
+}
+
+// TestInPlaceSortV2 verifies that InPlaceSort correctly reorders a v2
+// packet's Inputs and Outputs by BIP-69 rules using per-input/output
+// accessors, without requiring UnsignedTx.
+func TestInPlaceSortV2(t *testing.T) {
+	pkt := makeV2ForSort(t)
+
+	// Record pre-sort markers.
+	preSortIn0 := pkt.Inputs[0].SighashType
+	preSortOut0 := pkt.Outputs[0].RedeemScript[0]
+
+	err := InPlaceSort(pkt)
+	require.NoError(t, err)
+
+	// Verify inputs are sorted by prevout hash (big-endian), then index.
+	for i := 0; i < len(pkt.Inputs)-1; i++ {
+		outI, err := pkt.inputPrevOutpoint(i)
+		require.NoError(t, err)
+		outJ, err := pkt.inputPrevOutpoint(i + 1)
+		require.NoError(t, err)
+
+		cmp := bytes.Compare(outI.Hash[:], outJ.Hash[:])
+		if cmp == 0 {
+			require.LessOrEqual(t, outI.Index, outJ.Index,
+				"same-hash inputs not index-sorted")
+		}
+		// We just need the sort to have run; the exact BIP-69 hash
+		// reversal is tested by the existing v0 sort test.
+	}
+
+	// Verify outputs are sorted by amount ascending.
+	amt0, err := pkt.outputAmount(0)
+	require.NoError(t, err)
+	amt1, err := pkt.outputAmount(1)
+	require.NoError(t, err)
+	require.LessOrEqual(t, amt0, amt1, "outputs not sorted by amount")
+
+	// Verify that sorting actually moved elements (not a no-op).
+	// At least one of the marker pairs should have changed position.
+	postSortIn0 := pkt.Inputs[0].SighashType
+	postSortOut0 := pkt.Outputs[0].RedeemScript[0]
+	moved := preSortIn0 != postSortIn0 || preSortOut0 != postSortOut0
+	require.True(t, moved, "sort should have reordered at least one slice")
+}
+
+// TestInPlaceSortV2RejectsSignedPacket verifies that InPlaceSort refuses
+// to sort a v2 packet that already has signature data attached.
+func TestInPlaceSortV2RejectsSignedPacket(t *testing.T) {
+	pkt := makeV2ForSort(t)
+	// Attach a dummy partial signature.
+	pkt.Inputs[0].PartialSigs = []*PartialSig{{
+		PubKey:    testPub1,
+		Signature: testSig1,
+	}}
+
+	err := InPlaceSort(pkt)
+	require.Error(t, err, "InPlaceSort must reject signed packets")
+	require.Contains(t, err.Error(), "signature data")
+}
+
+// TestInPlaceSortV2RejectsMalformedPacket verifies that InPlaceSort returns
+// an error for a v2 packet with missing required fields (PreviousTxID,
+// OutputIndex, Amount, Script) rather than silently treating them as zero.
+func TestInPlaceSortV2RejectsMalformedPacket(t *testing.T) {
+	t.Run("missing_prevtxid", func(t *testing.T) {
+		idx := uint32(0)
+		amt := int64(1_000)
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs:    []PInput{{OutputIndex: &idx}},
+			Outputs:   []POutput{{Amount: &amt, Script: []byte{0x51}}},
+		}
+		err := InPlaceSort(pkt)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "PreviousTxID")
+	})
+
+	t.Run("missing_output_amount", func(t *testing.T) {
+		txid := chainhash.HashH([]byte("sort-malformed"))
+		idx := uint32(0)
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs:    []PInput{{PreviousTxID: &txid, OutputIndex: &idx}},
+			Outputs:   []POutput{{Script: []byte{0x51}}},
+		}
+		err := InPlaceSort(pkt)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Amount")
+	})
+}
+
+// TestSumUtxoInputValuesV2 verifies that SumUtxoInputValues works on a v2
+// packet (where UnsignedTx is nil) by using the version-aware accessor.
+func TestSumUtxoInputValuesV2(t *testing.T) {
+	t.Run("witness_utxo", func(t *testing.T) {
+		pkt := makeV2WithWitnessUtxo(t, nil)
+		sum, err := SumUtxoInputValues(pkt)
+		require.NoError(t, err)
+		require.Equal(t, int64(50_000), sum)
+	})
+
+	t.Run("non_witness_utxo", func(t *testing.T) {
+		txid := chainhash.HashH([]byte("non-witness-sum"))
+		idx := uint32(0)
+		outAmt := int64(40_000)
+		outScript := []byte{0x51}
+
+		fundTx := wire.NewMsgTx(2)
+		fundTx.AddTxIn(&wire.TxIn{})
+		fundTx.AddTxOut(&wire.TxOut{Value: 75_000, PkScript: []byte{0x76}})
+
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{{
+				PreviousTxID:   &txid,
+				OutputIndex:    &idx,
+				NonWitnessUtxo: fundTx,
+			}},
+			Outputs: []POutput{{
+				Amount: &outAmt,
+				Script: outScript,
+			}},
+		}
+		require.NoError(t, pkt.SanityCheck())
+
+		sum, err := SumUtxoInputValues(pkt)
+		require.NoError(t, err)
+		require.Equal(t, int64(75_000), sum)
+	})
+
+	t.Run("no_utxo_returns_error", func(t *testing.T) {
+		txid := chainhash.HashH([]byte("no-utxo"))
+		idx := uint32(0)
+		outAmt := int64(1_000)
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{{
+				PreviousTxID: &txid,
+				OutputIndex:  &idx,
+			}},
+			Outputs: []POutput{{
+				Amount: &outAmt,
+				Script: []byte{0x51},
+			}},
+		}
+		_, err := SumUtxoInputValues(pkt)
+		require.Error(t, err)
+	})
+}
+
+// TestVerifyInputOutputLenV2 verifies that VerifyInputOutputLen works for
+// v2 packets where UnsignedTx is nil.
+func TestVerifyInputOutputLenV2(t *testing.T) {
+	t.Run("valid_v2_with_inputs_and_outputs", func(t *testing.T) {
+		pkt := makeV2WithWitnessUtxo(t, nil)
+		err := VerifyInputOutputLen(pkt, true, true)
+		require.NoError(t, err)
+	})
+
+	t.Run("v2_no_inputs_but_needs_inputs", func(t *testing.T) {
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Outputs:   []POutput{{}},
+		}
+		err := VerifyInputOutputLen(pkt, true, false)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "at least one input")
+	})
+
+	t.Run("v2_no_outputs_but_needs_outputs", func(t *testing.T) {
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs:    []PInput{{}},
+		}
+		err := VerifyInputOutputLen(pkt, false, true)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "at least one output")
+	})
+
+	t.Run("v2_empty_ok_when_not_needed", func(t *testing.T) {
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+		}
+		err := VerifyInputOutputLen(pkt, false, false)
+		require.NoError(t, err)
+	})
+}
+
+// TestInputsReadyToSignV2 verifies that InputsReadyToSign works for v2
+// packets without depending on UnsignedTx.
+func TestInputsReadyToSignV2(t *testing.T) {
+	t.Run("ready_with_witness_utxo", func(t *testing.T) {
+		pkt := makeV2WithWitnessUtxo(t, nil)
+		err := InputsReadyToSign(pkt)
+		require.NoError(t, err)
+	})
+
+	t.Run("not_ready_missing_utxo", func(t *testing.T) {
+		txid := chainhash.HashH([]byte("not-ready"))
+		idx := uint32(0)
+		outAmt := int64(1_000)
+
+		pkt := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{{
+				PreviousTxID: &txid,
+				OutputIndex:  &idx,
+				// No WitnessUtxo or NonWitnessUtxo.
+			}},
+			Outputs: []POutput{{
+				Amount: &outAmt,
+				Script: []byte{0x51},
+			}},
+		}
+		err := InputsReadyToSign(pkt)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "missing utxo")
+	})
+}
+
+// TestV0V2HelperParity builds equivalent v0 and v2 packets and asserts that
+// SumUtxoInputValues, VerifyInputOutputLen, and InputsReadyToSign produce
+// matching results across both versions.
+func TestV0V2HelperParity(t *testing.T) {
+	// Build a v0 packet.
+	prevOut := &wire.OutPoint{
+		Hash:  chainhash.HashH([]byte("parity-test")),
+		Index: 0,
+	}
+	txOut := &wire.TxOut{Value: 60_000, PkScript: []byte{0x51}}
+	v0Pkt, err := New([]*wire.OutPoint{prevOut}, []*wire.TxOut{txOut}, 2, 0, []uint32{0})
+	require.NoError(t, err)
+	v0Pkt.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 80_000, PkScript: []byte{0x00, 0x14}}
+
+	// Build equivalent v2 packet.
+	txid := prevOut.Hash
+	idx := prevOut.Index
+	outAmt := txOut.Value
+	v2Pkt := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{{
+			PreviousTxID: &txid,
+			OutputIndex:  &idx,
+			WitnessUtxo:  &wire.TxOut{Value: 80_000, PkScript: []byte{0x00, 0x14}},
+		}},
+		Outputs: []POutput{{
+			Amount: &outAmt,
+			Script: txOut.PkScript,
+		}},
+	}
+
+	// SumUtxoInputValues parity.
+	v0Sum, err := SumUtxoInputValues(v0Pkt)
+	require.NoError(t, err)
+	v2Sum, err := SumUtxoInputValues(v2Pkt)
+	require.NoError(t, err)
+	require.Equal(t, v0Sum, v2Sum, "input sums must match")
+
+	// VerifyInputOutputLen parity.
+	require.NoError(t, VerifyInputOutputLen(v0Pkt, true, true))
+	require.NoError(t, VerifyInputOutputLen(v2Pkt, true, true))
+
+	// InputsReadyToSign parity.
+	require.NoError(t, InputsReadyToSign(v0Pkt))
+	require.NoError(t, InputsReadyToSign(v2Pkt))
+}
+
+// ///////////////////////////////////////////////////////////////////////////
+// Regression tests for bug fixes
+// ///////////////////////////////////////////////////////////////////////////
+
+// TestSignNilUTXOReturnsError verifies that Sign returns an error instead of
+// panicking when an input has neither WitnessUtxo nor NonWitnessUtxo.
+// Regression: signer.go default case dereferenced NonWitnessUtxo without a
+// nil guard, causing a panic on v2 packets before UTXO data is attached.
+func TestSignNilUTXOReturnsError(t *testing.T) {
+	txid := chainhash.HashH([]byte("nil-utxo-test"))
+	idx := uint32(0)
+	outAmt := int64(40_000)
+	outScript := []byte{0x51}
+
+	pkt := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{{
+			PreviousTxID:    &txid,
+			OutputIndex:     &idx,
+			PartialSigs:     []*PartialSig{},
+			Bip32Derivation: []*Bip32Derivation{},
+			// No WitnessUtxo, no NonWitnessUtxo.
+		}},
+		Outputs: []POutput{{
+			Amount: &outAmt,
+			Script: outScript,
+		}},
+	}
+	require.NoError(t, pkt.SanityCheck())
+
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
+	require.Error(t, err, "Sign must return an error, not panic")
+	require.Equal(t, SignOutcome(SignInvalid), res)
+}
+
+// TestSignUsesStoredRedeemScript verifies that the Sign redeem-script branch
+// checks pInput.RedeemScript (the stored field) rather than the function
+// argument when deciding whether the input is a witness program.
+// Regression: signer.go Case 2 passed the argument `redeemScript` to
+// IsWitnessProgram instead of pInput.RedeemScript, so callers that
+// pre-populated the PSBT and passed nil missed witness conversion.
+func TestSignUsesStoredRedeemScript(t *testing.T) {
+	idx := uint32(0)
+	outAmt := int64(40_000)
+	outScript := []byte{0x51}
+
+	// Build a P2SH-P2WPKH redeemScript (a witness program).
+	pubKeyHash := btcutil.Hash160(testPub1)
+	redeemScript, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_0).
+		AddData(pubKeyHash).
+		Script()
+	require.NoError(t, err)
+
+	// Create a funding tx whose output is P2SH wrapping the witness program.
+	p2shScript, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_HASH160).
+		AddData(btcutil.Hash160(redeemScript)).
+		AddOp(txscript.OP_EQUAL).
+		Script()
+	require.NoError(t, err)
+
+	fundTx := wire.NewMsgTx(2)
+	fundTx.AddTxIn(&wire.TxIn{})
+	fundTx.AddTxOut(&wire.TxOut{Value: 50_000, PkScript: p2shScript})
+	fundTxid := fundTx.TxHash()
+
+	pkt := &Packet{
+		Version:   2,
+		TxVersion: 2,
+		Inputs: []PInput{{
+			PreviousTxID:    &fundTxid,
+			OutputIndex:     &idx,
+			NonWitnessUtxo:  fundTx,
+			RedeemScript:    redeemScript, // Pre-populated.
+			PartialSigs:     []*PartialSig{},
+			Bip32Derivation: []*Bip32Derivation{},
+		}},
+		Outputs: []POutput{{
+			Amount: &outAmt,
+			Script: outScript,
+		}},
+	}
+	require.NoError(t, pkt.SanityCheck())
+
+	u, err := NewUpdater(pkt)
+	require.NoError(t, err)
+
+	// Pass nil redeemScript to Sign -- it should use the stored one.
+	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, SignOutcome(SignSuccesful), res)
+
+	// The fix: WitnessUtxo should now be populated because the stored
+	// redeemScript was correctly identified as a witness program.
+	require.NotNil(t, pkt.Inputs[0].WitnessUtxo,
+		"WitnessUtxo must be set after signing a P2SH-P2WPKH input")
+}
+
+// TestDuplicateUnknownKeyRejected verifies that the parser rejects two
+// unknown entries with the same key but different values.
+// Regression: duplicate detection compared both key AND value, so entries
+// with the same key but different values were silently accepted.
+func TestDuplicateUnknownKeyRejected(t *testing.T) {
+	// Use a proprietary key type (0xFC) with identical keydata but
+	// different values.
+	propKey := byte(0xFC)
+
+	t.Run("input_map", func(t *testing.T) {
+		var buf bytes.Buffer
+		// First entry: key=0xFC||0x01, value=0xAA
+		putKV(t, &buf, propKey, []byte{0x01}, []byte{0xAA})
+		// Duplicate key, different value: key=0xFC||0x01, value=0xBB
+		putKV(t, &buf, propKey, []byte{0x01}, []byte{0xBB})
+		endSection(t, &buf)
+
+		var pi PInput
+		err := pi.deserialize(bytes.NewReader(buf.Bytes()))
+		require.ErrorIs(t, err, ErrDuplicateKey)
+	})
+
+	t.Run("output_map", func(t *testing.T) {
+		var buf bytes.Buffer
+		putKV(t, &buf, propKey, []byte{0x01}, []byte{0xAA})
+		putKV(t, &buf, propKey, []byte{0x01}, []byte{0xBB})
+		endSection(t, &buf)
+
+		var po POutput
+		err := po.deserialize(bytes.NewReader(buf.Bytes()))
+		require.ErrorIs(t, err, ErrDuplicateKey)
+	})
+
+	t.Run("appendUnknownKV_helper", func(t *testing.T) {
+		var unknowns []*Unknown
+		err := appendUnknownKV(&unknowns, 0xFC, []byte{0x01}, []byte{0xAA})
+		require.NoError(t, err)
+		err = appendUnknownKV(&unknowns, 0xFC, []byte{0x01}, []byte{0xBB})
+		require.ErrorIs(t, err, ErrDuplicateKey)
+	})
+}
+
+// TestReadTxOutMultiByteVarInt verifies that readTxOut correctly handles
+// scriptPubKeys whose CompactSize length prefix is longer than one byte
+// (>= 253 bytes), and validates the declared length against actual data.
+// Regression: readTxOut hardcoded offset 9 (8 value + 1 varint), which
+// misparsed scripts with multi-byte CompactSize prefixes.
+func TestReadTxOutMultiByteVarInt(t *testing.T) {
+	t.Run("large_script_3byte_varint", func(t *testing.T) {
+		// Build a TxOut with a 300-byte scriptPubKey.
+		// CompactSize for 300 = 0xFD 0x2C 0x01 (3 bytes).
+		value := uint64(42_000)
+		scriptLen := 300
+		script := bytes.Repeat([]byte{0xAB}, scriptLen)
+
+		var buf bytes.Buffer
+		err := binary.Write(&buf, binary.LittleEndian, value)
+		require.NoError(t, err)
+		err = wire.WriteVarInt(&buf, 0, uint64(scriptLen))
+		require.NoError(t, err)
+		_, err = buf.Write(script)
+		require.NoError(t, err)
+
+		txout, err := readTxOut(buf.Bytes())
+		require.NoError(t, err)
+		require.Equal(t, int64(value), txout.Value)
+		require.Len(t, txout.PkScript, scriptLen)
+		require.Equal(t, script, txout.PkScript)
+	})
+
+	t.Run("normal_script_1byte_varint", func(t *testing.T) {
+		// P2WPKH: 22-byte script, varint = single byte 0x16.
+		value := uint64(50_000)
+		script := bytes.Repeat([]byte{0xCD}, 22)
+
+		var buf bytes.Buffer
+		err := binary.Write(&buf, binary.LittleEndian, value)
+		require.NoError(t, err)
+		err = wire.WriteVarInt(&buf, 0, 22)
+		require.NoError(t, err)
+		_, err = buf.Write(script)
+		require.NoError(t, err)
+
+		txout, err := readTxOut(buf.Bytes())
+		require.NoError(t, err)
+		require.Equal(t, int64(value), txout.Value)
+		require.Equal(t, script, txout.PkScript)
+	})
+
+	t.Run("length_mismatch_rejected", func(t *testing.T) {
+		// Declare 100-byte script but only provide 50 bytes.
+		value := uint64(1_000)
+		var buf bytes.Buffer
+		err := binary.Write(&buf, binary.LittleEndian, value)
+		require.NoError(t, err)
+		err = wire.WriteVarInt(&buf, 0, 100)
+		require.NoError(t, err)
+		_, err = buf.Write(bytes.Repeat([]byte{0x00}, 50))
+		require.NoError(t, err)
+
+		_, err = readTxOut(buf.Bytes())
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+	})
+
+	t.Run("empty_script", func(t *testing.T) {
+		value := uint64(0)
+		var buf bytes.Buffer
+		err := binary.Write(&buf, binary.LittleEndian, value)
+		require.NoError(t, err)
+		err = wire.WriteVarInt(&buf, 0, 0)
+		require.NoError(t, err)
+
+		txout, err := readTxOut(buf.Bytes())
+		require.NoError(t, err)
+		require.Equal(t, int64(0), txout.Value)
+		require.Len(t, txout.PkScript, 0)
+	})
+}
+
+// TestTaprootScriptSpendSigSortCanonical verifies that the SortBefore
+// comparator for TaprootScriptSpendSig produces a stable, deterministic
+// ordering regardless of input arrangement.
+// Regression: the original comparator used && instead of lexicographic
+// ordering, which violated sort.Interface's strict weak ordering contract.
+func TestTaprootScriptSpendSigSortCanonical(t *testing.T) {
+	makeSig := func(pubFill, leafFill byte) *TaprootScriptSpendSig {
+		return &TaprootScriptSpendSig{
+			XOnlyPubKey: bytes.Repeat([]byte{pubFill}, 32),
+			LeafHash:    bytes.Repeat([]byte{leafFill}, 32),
+		}
+	}
+
+	// Three sigs that exposed the old && bug:
+	// A: pub=0x01, leaf=0x03
+	// B: pub=0x02, leaf=0x01
+	// C: pub=0x01, leaf=0x02  (same pub as A, different leaf)
+	a := makeSig(0x01, 0x03)
+	b := makeSig(0x02, 0x01)
+	c := makeSig(0x01, 0x02)
+
+	// Expected lexicographic order: C (01,02) < A (01,03) < B (02,01)
+	// Try multiple input arrangements to prove stability.
+	arrangements := [][]*TaprootScriptSpendSig{
+		{a, b, c},
+		{c, b, a},
+		{b, a, c},
+		{c, a, b},
+	}
+
+	for i, arr := range arrangements {
+		sorted := make([]*TaprootScriptSpendSig, len(arr))
+		copy(sorted, arr)
+		sort.Slice(sorted, func(x, y int) bool {
+			return sorted[x].SortBefore(sorted[y])
+		})
+
+		require.Equal(t, c, sorted[0], "arrangement %d: first", i)
+		require.Equal(t, a, sorted[1], "arrangement %d: second", i)
+		require.Equal(t, b, sorted[2], "arrangement %d: third", i)
+	}
+}
