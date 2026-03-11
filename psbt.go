@@ -1093,8 +1093,10 @@ func (p *Packet) buildUnsignedTx() (*wire.MsgTx, error) {
 		}
 
 		tx.AddTxOut(&wire.TxOut{
-			Value:    amount,
-			PkScript: script,
+			Value: amount,
+			// Return a fully detached transaction: callers should be able to
+			// mutate the materialized tx without aliasing PSBT-owned script bytes.
+			PkScript: append([]byte(nil), script...),
 		})
 	}
 
