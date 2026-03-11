@@ -98,7 +98,11 @@ func (u *Updater) Sign(inIndex int, sig []byte, pubKey []byte,
 		// We only need to decide if the input is witness, and we don't
 		// rely on the witnessutxo/nonwitnessutxo in the PSBT, instead
 		// we check the redeemScript content.
-		if txscript.IsWitnessProgram(redeemScript) {
+		//
+		// Use the stored pInput.RedeemScript (not the function argument)
+		// so that callers who pre-populated the PSBT and pass nil here
+		// still get correct witness-program detection for P2SH-P2W*.
+		if txscript.IsWitnessProgram(pInput.RedeemScript) {
 			if pInput.WitnessUtxo == nil {
 				err := nonWitnessToWitness(u.Upsbt, inIndex)
 				if err != nil {
@@ -119,6 +123,14 @@ func (u *Updater) Sign(inIndex int, sig []byte, pubKey []byte,
 	// output.
 	default:
 		if pInput.WitnessUtxo == nil {
+			// Guard against nil NonWitnessUtxo: an input may have
+			// neither UTXO field populated (e.g. a v2 packet before
+			// the Updater attaches UTXO data). Dereferencing without
+			// this check causes a nil-pointer panic.
+			if pInput.NonWitnessUtxo == nil {
+				return SignInvalid, ErrInvalidPsbtFormat
+			}
+
 			prevOut, err := u.Upsbt.inputPrevOutpoint(inIndex)
 			if err != nil {
 				return SignInvalid, err

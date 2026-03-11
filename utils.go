@@ -235,11 +235,11 @@ func appendUnknownKV(unknowns *[]*Unknown, keyCode int, keyData, value []byte) e
 		Value: value,
 	}
 
-	// Duplicate key+keyData are not allowed.
+	// BIP-174: keys must be unique within a map. Only the key matters
+	// for uniqueness - two entries with the same key but different
+	// values is a spec violation.
 	for _, x := range *unknowns {
-		if bytes.Equal(x.Key, newUnknown.Key) &&
-			bytes.Equal(x.Value, newUnknown.Value) {
-
+		if bytes.Equal(x.Key, newUnknown.Key) {
 			return ErrDuplicateKey
 		}
 	}
@@ -304,13 +304,33 @@ func getKey(r io.Reader) (int, []byte, error) {
 
 // readTxOut is a limited version of wire.ReadTxOut, because the latter is not
 // exported.
+//
+// The wire format is: [8-byte LE value] [CompactSize script length] [script].
+// CompactSize can be 1, 3, 5, or 9 bytes, so the script offset is not fixed.
 func readTxOut(txout []byte) (*wire.TxOut, error) {
-	if len(txout) < 10 {
+	// Minimum: 8 (value) + 1 (shortest CompactSize) + 0 (empty script).
+	if len(txout) < 9 {
 		return nil, ErrInvalidPsbtFormat
 	}
 
 	valueSer := binary.LittleEndian.Uint64(txout[:8])
-	scriptPubKey := txout[9:]
+
+	// Decode the CompactSize script length starting at byte 8.
+	r := bytes.NewReader(txout[8:])
+	scriptLen, err := wire.ReadVarInt(r, 0)
+	if err != nil {
+		return nil, ErrInvalidPsbtFormat
+	}
+
+	// Validate that the remaining bytes match the declared script length.
+	if uint64(r.Len()) != scriptLen {
+		return nil, ErrInvalidPsbtFormat
+	}
+
+	scriptPubKey := make([]byte, scriptLen)
+	if _, err := io.ReadFull(r, scriptPubKey); err != nil {
+		return nil, ErrInvalidPsbtFormat
+	}
 
 	return wire.NewTxOut(int64(valueSer), scriptPubKey), nil
 }

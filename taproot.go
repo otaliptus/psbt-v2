@@ -45,9 +45,16 @@ func (s *TaprootScriptSpendSig) EqualKey(other *TaprootScriptSpendSig) bool {
 // SortBefore returns true if this script spend signature's key is
 // lexicographically smaller than the given other script spend signature's key
 // and should come first when being sorted.
+//
+// Uses proper two-field lexicographic ordering: compare XOnlyPubKey first,
+// then use LeafHash as tiebreaker. This satisfies sort.Interface's strict
+// weak ordering requirement (transitivity + trichotomy).
 func (s *TaprootScriptSpendSig) SortBefore(other *TaprootScriptSpendSig) bool {
-	return bytes.Compare(s.XOnlyPubKey, other.XOnlyPubKey) < 0 &&
-		bytes.Compare(s.LeafHash, other.LeafHash) < 0
+	cmp := bytes.Compare(s.XOnlyPubKey, other.XOnlyPubKey)
+	if cmp != 0 {
+		return cmp < 0
+	}
+	return bytes.Compare(s.LeafHash, other.LeafHash) < 0
 }
 
 // TaprootTapLeafScript represents a single taproot leaf script that is
