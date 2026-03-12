@@ -572,7 +572,8 @@ func finalizeTaprootInput(p *Packet, inIndex int) error {
 		// multiple possible execution paths at the same time is
 		// currently not supported by this library.
 		targetLeafHash := pInput.TaprootScriptSpendSig[0].LeafHash
-		leafScript, err := FindLeafScript(pInput, targetLeafHash)
+		var leafScript *TaprootTapLeafScript
+		leafScript, err = FindLeafScript(pInput, targetLeafHash)
 		if err != nil {
 			return fmt.Errorf("control block for script spend " +
 				"signature not found")

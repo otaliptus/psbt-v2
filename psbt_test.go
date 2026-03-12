@@ -24,10 +24,11 @@ import (
 // Test vectors from:
 // // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#test-vectors
 
-// createPsbtFromSignedTx is a utility function to create a PSBT from an
-// already-signed transaction, so we can test reconstructing, signing and
-// extracting it. Returned are: an unsigned transaction serialization, a list
-// of scriptSigs, one per input, and a list of witnesses, one per input.
+// createPsbtFromSignedTx is a utility function (from btcd) to create a PSBT
+// from an already-signed transaction. Currently unused but retained for
+// upstream parity.
+var _ = createPsbtFromSignedTx
+
 func createPsbtFromSignedTx(serializedSignedTx []byte) (
 	*Packet, [][]byte, []wire.TxWitness, error) {
 
@@ -303,6 +304,9 @@ func TestSanityCheck(t *testing.T) {
 		t.Fatalf("Unable to decode hex: %v", err)
 	}
 	psbt1, err = NewFromRawBytes(bytes.NewReader(psbtraw1), false)
+	if err != nil {
+		t.Fatalf("Unable to parse raw bytes: %v", err)
+	}
 	updater, err = NewUpdater(psbt1)
 	if err != nil {
 		t.Fatalf("Unable to create Updater: %v", err)
@@ -449,6 +453,9 @@ func TestPsbtCreator(t *testing.T) {
 
 	// Use valid data to create:
 	cPsbt, err := New(inputs, outputs, int32(2), uint32(0), nSequences)
+	if err != nil {
+		t.Fatalf("Unable to create PSBT: %v", err)
+	}
 	var b bytes.Buffer
 	err = cPsbt.Serialize(&b)
 	if err != nil {
@@ -669,14 +676,14 @@ func TestPsbtSigner(t *testing.T) {
 	psbtUpdater1 := Updater{
 		Upsbt: psbt1,
 	}
-	sig1, err := hex.DecodeString("3044022074018ad4180097b873323c0015720b3684cc8123891048e7dbcd9b55ad679c99022073d369b740e3eb53dcefa33823c8070514ca55a7dd9544f157c167913261118c01")
-	pub1, err := hex.DecodeString("029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f")
+	sig1, _ := hex.DecodeString("3044022074018ad4180097b873323c0015720b3684cc8123891048e7dbcd9b55ad679c99022073d369b740e3eb53dcefa33823c8070514ca55a7dd9544f157c167913261118c01")
+	pub1, _ := hex.DecodeString("029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f")
 	res, err := psbtUpdater1.Sign(0, sig1, pub1, nil, nil)
 	if err != nil || res != 0 {
 		t.Fatalf("Error from adding signatures: %v %v", err, res)
 	}
-	sig2, err := hex.DecodeString("3044022062eb7a556107a7c73f45ac4ab5a1dddf6f7075fb1275969a7f383efff784bcb202200c05dbb7470dbf2f08557dd356c7325c1ed30913e996cd3840945db12228da5f01")
-	pub2, err := hex.DecodeString("03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc")
+	sig2, _ := hex.DecodeString("3044022062eb7a556107a7c73f45ac4ab5a1dddf6f7075fb1275969a7f383efff784bcb202200c05dbb7470dbf2f08557dd356c7325c1ed30913e996cd3840945db12228da5f01")
+	pub2, _ := hex.DecodeString("03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc")
 	res, err = psbtUpdater1.Sign(1, sig2, pub2, nil, nil)
 	if err != nil || res != 0 {
 		t.Fatalf("Error from adding signatures: %v %v", err, res)
@@ -867,7 +874,7 @@ func TestImportFromCore1(t *testing.T) {
 		t.Fatalf("Error deserializing transaction: %v", err)
 	}
 	psbtupdater1 := Updater{Upsbt: psbt1}
-	psbtupdater1.AddInWitnessUtxo(txFund1Out, 0)
+	_ = psbtupdater1.AddInWitnessUtxo(txFund1Out, 0)
 	err = psbtupdater1.AddInNonWitnessUtxo(txFund2, 1)
 	if err != nil {
 		t.Fatalf("Error inserting non-witness utxo: %v", err)
@@ -889,13 +896,13 @@ func TestImportFromCore1(t *testing.T) {
 	// Check that invalid pubkeys are not accepted.
 	pubInvalid := append(pub1, 0x00)
 
-	res, err := psbtupdater1.Sign(0, sig1, pubInvalid, nil, nil)
+	_, err = psbtupdater1.Sign(0, sig1, pubInvalid, nil, nil)
 	if err == nil {
 		t.Fatalf("Incorrectly accepted invalid pubkey: %v",
 			pubInvalid)
 	}
 
-	res, err = psbtupdater1.Sign(0, sig1, pub1, nil, nil)
+	res, err := psbtupdater1.Sign(0, sig1, pub1, nil, nil)
 	if err != nil || res != 0 {
 		t.Fatalf("Error from adding signatures: %v %v", err, res)
 	}
@@ -922,9 +929,9 @@ func TestImportFromCore1(t *testing.T) {
 		t.Fatalf("NewUpdater failed while trying to create borked "+
 			"version: %v", err)
 	}
-	borkedUpdater.AddInWitnessUtxo(txFund1Out, 0)
+	_ = borkedUpdater.AddInWitnessUtxo(txFund1Out, 0)
 
-	res, err = borkedUpdater.Sign(0, sig2, pub2, nil, nil)
+	_, err = borkedUpdater.Sign(0, sig2, pub2, nil, nil)
 	if err != ErrInvalidSignatureForInput {
 		t.Fatalf("AddPartialSig succeeded, but should have failed "+
 			"due to mismatch between pubkey and prevOut; err was: %v", err)
@@ -941,7 +948,7 @@ func TestImportFromCore1(t *testing.T) {
 		t.Fatalf("Error deserializing transaction: %v", err)
 	}
 	psbtBorkedInput2.Inputs[1] = *NewPsbtInput(wrongTx, nil)
-	res, err = borkedUpdater.Sign(1, sig2, pub2, nil, nil)
+	_, err = borkedUpdater.Sign(1, sig2, pub2, nil, nil)
 	if err != ErrInvalidSignatureForInput {
 		t.Fatalf("Error should have been invalid sig for input, was: %v", err)
 	}
@@ -1023,7 +1030,7 @@ func TestImportFromCore2(t *testing.T) {
 	txFund1Out := txFund1.TxOut[1]
 
 	psbtupdater1 := Updater{Upsbt: psbt1}
-	psbtupdater1.AddInWitnessUtxo(txFund1Out, 0)
+	_ = psbtupdater1.AddInWitnessUtxo(txFund1Out, 0)
 
 	// This input is p2sh-p2wkh, so it requires a redeemscript but not
 	// a witness script. The redeemscript is the witness program.
@@ -1031,7 +1038,7 @@ func TestImportFromCore2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to decode hex: %v", err)
 	}
-	psbtupdater1.AddInRedeemScript(redeemScript, 0)
+	_ = psbtupdater1.AddInRedeemScript(redeemScript, 0)
 
 	// Signing for the first input was done with Core; we manually insert the
 	// relevant input entries here.
@@ -1068,7 +1075,7 @@ func TestImportFromCore2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to decode hex: %v", err)
 	}
-	psbtupdater1.AddOutRedeemScript(output2RedeemScript, 1)
+	_ = psbtupdater1.AddOutRedeemScript(output2RedeemScript, 1)
 	// The main function of the test is to compare the thus-generated
 	// partially (not completely) signed transaction with that generated and
 	// encoded by Core.
@@ -1100,7 +1107,7 @@ func TestImportFromCore2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create updater: %v", err)
 	}
-	psbtupdater2.AddInWitnessUtxo(txFund2Out, 1)
+	_ = psbtupdater2.AddInWitnessUtxo(txFund2Out, 1)
 	// Add redeemScript, which is the witnessscript/program:
 	redeemScript, err = hex.DecodeString("00208c2353173743b595dfb4a07b72ba8e42e3797da74e87fe7d9d7497e3b2028903")
 	if err != nil {
@@ -1141,7 +1148,7 @@ func TestImportFromCore2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to decode hex: %v", err)
 	}
-	res, err = psbtupdater2.Sign(1, sig21, pub21, nil, nil)
+	_, _ = psbtupdater2.Sign(1, sig21, pub21, nil, nil)
 
 	// Check that the finalization procedure fails here due to not
 	// meeting the multisig policy
@@ -1153,7 +1160,7 @@ func TestImportFromCore2(t *testing.T) {
 		t.Fatalf("Got unexpected error type: %v", err)
 	}
 
-	res, err = psbtupdater2.Sign(1, sig22, pub22, nil, nil)
+	_, _ = psbtupdater2.Sign(1, sig22, pub22, nil, nil)
 
 	// Check that the finalization procedure also fails with a nonsense
 	// script
@@ -1186,7 +1193,7 @@ func TestImportFromCore2(t *testing.T) {
 
 	// Add a (fake) witnessOut descriptor field to one of the outputs,
 	// for coverage purposes (we aren't currently using this field)
-	psbtupdater2.AddOutWitnessScript([]byte{0xff, 0xff, 0xff}, 0)
+	_ = psbtupdater2.AddOutWitnessScript([]byte{0xff, 0xff, 0xff}, 0)
 
 	// Sanity check; we should not have lost the additional output entry
 	// provided by Core initially
@@ -1249,7 +1256,7 @@ func TestMaybeFinalizeAll(t *testing.T) {
 		t.Fatalf("Error deserializing transaction: %v", err)
 	}
 	txFund1Out := tx.TxOut[1]
-	psbtupdater1.AddInWitnessUtxo(txFund1Out, 0)
+	_ = psbtupdater1.AddInWitnessUtxo(txFund1Out, 0)
 
 	tx = wire.NewMsgTx(2)
 	err = tx.Deserialize(bytes.NewReader(fundingTxInput2))
@@ -1257,7 +1264,7 @@ func TestMaybeFinalizeAll(t *testing.T) {
 		t.Fatalf("Error deserializing transaction: %v", err)
 	}
 	txFund2Out := tx.TxOut[0]
-	psbtupdater1.AddInWitnessUtxo(txFund2Out, 1)
+	_ = psbtupdater1.AddInWitnessUtxo(txFund2Out, 1)
 
 	tx = wire.NewMsgTx(2)
 	err = tx.Deserialize(bytes.NewReader(fundingTxInput3))
@@ -1265,7 +1272,7 @@ func TestMaybeFinalizeAll(t *testing.T) {
 		t.Fatalf("Error deserializing transaction: %v", err)
 	}
 	txFund3Out := tx.TxOut[1]
-	psbtupdater1.AddInWitnessUtxo(txFund3Out, 2)
+	_ = psbtupdater1.AddInWitnessUtxo(txFund3Out, 2)
 
 	// To be ready for finalization, we need to have  partial signature
 	// fields for each input
@@ -1290,7 +1297,7 @@ func TestMaybeFinalizeAll(t *testing.T) {
 		t.Fatalf("Expected finalization failure, got: %v", err)
 	}
 
-	res, err = psbtupdater1.Sign(2, sig3, pub3, nil, nil)
+	_, _ = psbtupdater1.Sign(2, sig3, pub3, nil, nil)
 
 	// Since this input is now finalizable and is p2wkh only, we can do
 	// all at once:
@@ -1379,9 +1386,9 @@ func TestNonWitnessToWitness(t *testing.T) {
 
 	// Add NonWitnessUtxo fields for each of the other three inputs
 	u := Updater{Upsbt: psbt1}
-	u.AddInNonWitnessUtxo(nwutxo1, 1)
-	u.AddInNonWitnessUtxo(nwutxo2, 2)
-	u.AddInNonWitnessUtxo(nwutxo3, 3)
+	_ = u.AddInNonWitnessUtxo(nwutxo1, 1)
+	_ = u.AddInNonWitnessUtxo(nwutxo2, 2)
+	_ = u.AddInNonWitnessUtxo(nwutxo3, 3)
 
 	// Signatures for each of those inputs were created with Core:
 	sig1, _ := hex.DecodeString("304402205676877e6162ce40a49ee5a74443cdc1e7915637c42da7b872c2ec2298fd371b02203c1d4a05b1e2a7a588d9ec9b8d4892d2cd59bebe0e777483477a0ec692ebbe6d01")

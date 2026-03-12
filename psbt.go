@@ -44,7 +44,6 @@ const MaxPsbtKeyLength = 10000
 // to have a consistent behavior.
 const MaxPsbtKeyValue = 0x02000000
 
-// TODO: Consider this again.
 // maxPsbtInputOutputCount is a sanity cap on the number of inputs or outputs
 // a PSBT may declare. This prevents a malicious packet from triggering huge
 // allocations. Real-world transactions rarely exceed a few thousand I/O.
@@ -54,33 +53,33 @@ var (
 
 	// ErrInvalidPsbtFormat is a generic error for any situation in which a
 	// provided Psbt serialization does not conform to the rules of BIP174.
-	ErrInvalidPsbtFormat = errors.New("Invalid PSBT serialization format")
+	ErrInvalidPsbtFormat = errors.New("invalid PSBT serialization format")
 
 	// ErrDuplicateKey indicates that a passed Psbt serialization is invalid
 	// due to having the same key repeated in the same key-value pair.
-	ErrDuplicateKey = errors.New("Invalid Psbt due to duplicate key")
+	ErrDuplicateKey = errors.New("invalid PSBT due to duplicate key")
 
 	// ErrInvalidKeyData indicates that a key-value pair in the PSBT
 	// serialization contains data in the key which is not valid.
-	ErrInvalidKeyData = errors.New("Invalid key data")
+	ErrInvalidKeyData = errors.New("invalid key data")
 
 	// ErrInvalidMagicBytes indicates that a passed Psbt serialization is
 	// invalid due to having incorrect magic bytes.
-	ErrInvalidMagicBytes = errors.New("Invalid Psbt due to incorrect " +
+	ErrInvalidMagicBytes = errors.New("invalid PSBT due to incorrect " +
 		"magic bytes")
 
 	// ErrInvalidRawTxSigned indicates that the raw serialized transaction
 	// in the global section of the passed Psbt serialization is invalid
 	// because it contains scriptSigs/witnesses (i.e. is fully or partially
 	// signed), which is not allowed by BIP174.
-	ErrInvalidRawTxSigned = errors.New("Invalid Psbt, raw transaction " +
-		"must be unsigned.")
+	ErrInvalidRawTxSigned = errors.New("invalid PSBT, raw transaction " +
+		"must be unsigned")
 
 	// ErrInvalidPrevOutNonWitnessTransaction indicates that the transaction
 	// hash (i.e. SHA256^2) of the fully serialized previous transaction
 	// provided in the NonWitnessUtxo key-value field doesn't match the
 	// prevout hash in the UnsignedTx field in the PSBT itself.
-	ErrInvalidPrevOutNonWitnessTransaction = errors.New("Prevout hash " +
+	ErrInvalidPrevOutNonWitnessTransaction = errors.New("prevout hash " +
 		"does not match the provided non-witness utxo serialization")
 
 	// ErrInvalidSignatureForInput indicates that the signature the user is
@@ -88,29 +87,29 @@ var (
 	// not correspond to the previous transaction hash, or redeem script,
 	// or witness script.
 	// NOTE this does not include ECDSA signature checking.
-	ErrInvalidSignatureForInput = errors.New("Signature does not " +
+	ErrInvalidSignatureForInput = errors.New("signature does not " +
 		"correspond to this input")
 
 	// ErrInputAlreadyFinalized indicates that the PSBT passed to a
 	// Finalizer already contains the finalized scriptSig or witness.
-	ErrInputAlreadyFinalized = errors.New("Cannot finalize PSBT, " +
-		"finalized scriptSig or scriptWitnes already exists")
+	ErrInputAlreadyFinalized = errors.New("cannot finalize PSBT, " +
+		"finalized scriptSig or scriptWitness already exists")
 
 	// ErrIncompletePSBT indicates that the Extractor object
 	// was unable to successfully extract the passed Psbt struct because
 	// it is not complete
-	ErrIncompletePSBT = errors.New("PSBT cannot be extracted as it is " +
+	ErrIncompletePSBT = errors.New("psbt cannot be extracted as it is " +
 		"incomplete")
 
 	// ErrNotFinalizable indicates that the PSBT struct does not have
 	// sufficient data (e.g. signatures) for finalization
-	ErrNotFinalizable = errors.New("PSBT is not finalizable")
+	ErrNotFinalizable = errors.New("psbt is not finalizable")
 
 	// ErrInvalidSigHashFlags indicates that a signature added to the PSBT
 	// uses Sighash flags that are not in accordance with the requirement
 	// according to the entry in PsbtInSighashType, or otherwise not the
 	// default value (SIGHASH_ALL)
-	ErrInvalidSigHashFlags = errors.New("Invalid Sighash Flags")
+	ErrInvalidSigHashFlags = errors.New("invalid sighash flags")
 
 	// ErrInputsNotModifiable indicates that the Constructor tried to
 	// add or remove an input but the Inputs Modifiable flag (bit 0 of
@@ -140,7 +139,7 @@ var (
 	// ErrUnsupportedScriptType indicates that the redeem script or
 	// script witness given is not supported by this codebase, or is
 	// otherwise not valid.
-	ErrUnsupportedScriptType = errors.New("Unsupported script type")
+	ErrUnsupportedScriptType = errors.New("unsupported script type")
 
 	// ErrInputIndexOutOfBounds indicates that the caller supplied an
 	// input index that is negative or >= the number of inputs.
@@ -234,7 +233,6 @@ func NewFromUnsignedTx(tx *wire.MsgTx) (*Packet, error) {
 	}, nil
 }
 
-// TODO: CHECK
 func decodeCompactSizeValue(value []byte) (int, error) {
 	reader := bytes.NewReader(value)
 
@@ -441,7 +439,6 @@ func parseGlobalMap(r io.Reader) (*Packet, int, int, error) {
 			v := binary.LittleEndian.Uint32(value)
 			version = &v
 
-		// TODO(check): Should this go to unknown?
 		case ProprietaryGlobalType:
 			err := appendUnknownKV(&unknownSlice, keyCode, keyData, value)
 			if err != nil {
@@ -1115,8 +1112,6 @@ func (p *Packet) ComputedLockTime() (uint32, error) {
 		return p.UnsignedTx.LockTime, nil
 	}
 
-	// (TODO): I had a thought about here but forgot
-	// 		 : Check carefully
 	var (
 		hasAnyLocktime bool
 		heightPossible = true
