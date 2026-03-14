@@ -2197,7 +2197,7 @@ func TestV2UpdaterSignDoesNotPanic(t *testing.T) {
 
 	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, SignOutcome(SignSuccesful), res)
+	require.Equal(t, SignOutcome(SignSuccessful), res)
 	require.Len(t, pkt.Inputs[0].PartialSigs, 1)
 }
 
@@ -2272,7 +2272,7 @@ func TestV2SignerUpdatesTxModifiable(t *testing.T) {
 
 			res, err := u.Sign(0, sig, testPub1, nil, nil)
 			require.NoError(t, err)
-			require.Equal(t, SignOutcome(SignSuccesful), res)
+			require.Equal(t, SignOutcome(SignSuccessful), res)
 
 			require.NotNil(t, pkt.TxModifiable)
 			require.Equal(t, tc.expectedMask, *pkt.TxModifiable,
@@ -2302,7 +2302,7 @@ func TestV2SignerNoFlagUpdateForV0(t *testing.T) {
 
 	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, SignOutcome(SignSuccesful), res)
+	require.Equal(t, SignOutcome(SignSuccessful), res)
 
 	// v0 must not have TxModifiable set.
 	require.Nil(t, pkt.TxModifiable)
@@ -2373,7 +2373,7 @@ func TestV2AddPartialSigPrevOutValidation(t *testing.T) {
 	// Sign should work — the accessor resolves the prevout from v2 fields.
 	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, SignOutcome(SignSuccesful), res)
+	require.Equal(t, SignOutcome(SignSuccessful), res)
 
 	// Now verify with a mismatched txid — should fail validation.
 	wrongTxid := chainhash.HashH([]byte("wrong-txid"))
@@ -2414,7 +2414,7 @@ func TestV2ExtractReconstructsTx(t *testing.T) {
 
 	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, SignOutcome(SignSuccesful), res)
+	require.Equal(t, SignOutcome(SignSuccessful), res)
 
 	// Finalize.
 	err = MaybeFinalizeAll(pkt)
@@ -2500,7 +2500,7 @@ func TestV2ExtractWithLocktime(t *testing.T) {
 
 	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, SignOutcome(SignSuccesful), res)
+	require.Equal(t, SignOutcome(SignSuccessful), res)
 
 	err = MaybeFinalizeAll(pkt)
 	require.NoError(t, err)
@@ -2567,7 +2567,7 @@ func TestV2ExtractMultipleInputsOutputs(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		res, err := u.Sign(i, testSig1, testPub1, nil, nil)
 		require.NoError(t, err)
-		require.Equal(t, SignOutcome(SignSuccesful), res)
+		require.Equal(t, SignOutcome(SignSuccessful), res)
 	}
 
 	err = MaybeFinalizeAll(pkt)
@@ -3097,7 +3097,7 @@ func TestSignUsesStoredRedeemScript(t *testing.T) {
 	// Pass nil redeemScript to Sign -- it should use the stored one.
 	res, err := u.Sign(0, testSig1, testPub1, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, SignOutcome(SignSuccesful), res)
+	require.Equal(t, SignOutcome(SignSuccessful), res)
 
 	// The fix: WitnessUtxo should now be populated because the stored
 	// redeemScript was correctly identified as a witness program.
@@ -3265,4 +3265,483 @@ func TestTaprootScriptSpendSigSortCanonical(t *testing.T) {
 		require.Equal(t, a, sorted[1], "arrangement %d: second", i)
 		require.Equal(t, b, sorted[2], "arrangement %d: third", i)
 	}
+}
+
+// /////////////////////////////////////////////////////////////////////////////
+// Gap 2: End-to-end v2 lifecycle
+// /////////////////////////////////////////////////////////////////////////////
+//
+// Exercises the full BIP-370 role chain in a single test:
+// Creator → Constructor → Updater → Signer → Serializer → Parser →
+// Finalizer → Extractor.
+
+func TestV2LifecycleEndToEnd(t *testing.T) {
+	// ── From-scratch P2WPKH lifecycle ──────────────────────────────────
+	t.Run("p2wpkh_from_scratch", func(t *testing.T) {
+		// Known pubkey from BIP-174 test vectors.
+		pub, _ := hex.DecodeString(
+			"029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f")
+
+		// Build the P2WPKH scriptPubKey that locks the UTXO to `pub`.
+		pubHash := btcutil.Hash160(pub)
+		p2wpkhScript, err := txscript.NewScriptBuilder().
+			AddOp(txscript.OP_0).
+			AddData(pubHash).
+			Script()
+		require.NoError(t, err)
+
+		// Destination output (another P2WPKH).
+		destHash := bytes.Repeat([]byte{0xab}, 20)
+		destScript, err := txscript.NewScriptBuilder().
+			AddOp(txscript.OP_0).
+			AddData(destHash).
+			Script()
+		require.NoError(t, err)
+
+		prevTxID := chainhash.HashH([]byte("fake-prev-tx"))
+		prevOutpoint := wire.OutPoint{Hash: prevTxID, Index: 0}
+
+		// ── CREATOR ──
+		locktime := uint32(0)
+		modifiable := uint8(0x03) // inputs + outputs modifiable
+		pkt, err := NewV2(
+			2,
+			[]wire.OutPoint{prevOutpoint},
+			[]*wire.TxOut{{Value: 50_000_000, PkScript: destScript}},
+			&locktime, &modifiable,
+		)
+		require.NoError(t, err)
+		require.Equal(t, uint32(2), pkt.Version)
+		require.Nil(t, pkt.UnsignedTx, "v2 must not have UnsignedTx")
+
+		// ── CONSTRUCTOR (verify the wrapper works) ──
+		ctor, err := NewConstructor(pkt)
+		require.NoError(t, err)
+		require.NotNil(t, ctor)
+
+		// ── UPDATER ──
+		updater, err := NewUpdater(pkt)
+		require.NoError(t, err)
+
+		err = updater.AddInWitnessUtxo(&wire.TxOut{
+			Value:    100_000_000,
+			PkScript: p2wpkhScript,
+		}, 0)
+		require.NoError(t, err)
+
+		// ── SERIALIZE / ROUND-TRIP ──
+		var buf bytes.Buffer
+		require.NoError(t, pkt.Serialize(&buf))
+
+		pkt2, err := NewFromRawBytes(bytes.NewReader(buf.Bytes()), false)
+		require.NoError(t, err)
+		require.Equal(t, uint32(2), pkt2.Version)
+
+		// Continue with the round-tripped packet.
+		updater2, err := NewUpdater(pkt2)
+		require.NoError(t, err)
+
+		// ── SIGNER ──
+		sig, _ := hex.DecodeString(
+			"3044022074018ad4180097b873323c0015720b3684cc8123891048e7dbcd9b55ad679c99" +
+				"022073d369b740e3eb53dcefa33823c8070514ca55a7dd9544f157c167913261118c01")
+
+		res, err := updater2.Sign(0, sig, pub, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, SignSuccessful, int(res))
+
+		// Signer clears the Inputs Modifiable bit.
+		require.NotNil(t, pkt2.TxModifiable)
+		require.Zero(t, *pkt2.TxModifiable&0x01,
+			"inputs-modifiable flag should be cleared after signing")
+
+		// ── FINALIZER ──
+		require.NoError(t, MaybeFinalizeAll(pkt2))
+		require.True(t, pkt2.IsComplete())
+
+		// ── EXTRACTOR ──
+		tx, err := Extract(pkt2)
+		require.NoError(t, err)
+
+		require.Len(t, tx.TxIn, 1)
+		require.Len(t, tx.TxOut, 1)
+		require.Equal(t, prevOutpoint, tx.TxIn[0].PreviousOutPoint)
+		require.Equal(t, int64(50_000_000), tx.TxOut[0].Value)
+		require.Equal(t, destScript, tx.TxOut[0].PkScript)
+
+		// P2WPKH witness: [sig, pubkey]
+		require.Len(t, tx.TxIn[0].Witness, 2)
+		require.Equal(t, sig, []byte(tx.TxIn[0].Witness[0]))
+		require.Equal(t, pub, []byte(tx.TxIn[0].Witness[1]))
+		require.Equal(t, uint32(0), tx.LockTime)
+	})
+
+	// ── Convert BIP-174 v0 → v2, finalize, extract ─────────────────────
+	// Takes the fully-signed BIP-174 combined PSBT (v0), converts to v2,
+	// round-trips through serialization, finalizes, extracts, and compares
+	// the resulting network transaction to the known BIP-174 answer.
+	t.Run("convert_finalize_extract", func(t *testing.T) {
+		// Combined PSBT with all 4 partial sigs (from psbt_test.go).
+		combinedHex := finalizerPsbtData["finalize"]
+		combinedBytes, err := hex.DecodeString(combinedHex)
+		require.NoError(t, err)
+
+		v0Pkt, err := NewFromRawBytes(
+			bytes.NewReader(combinedBytes), false,
+		)
+		require.NoError(t, err)
+		require.Equal(t, uint32(0), v0Pkt.Version)
+
+		// Convert v0 → v2.
+		v2Pkt, err := ConvertToV2(v0Pkt)
+		require.NoError(t, err)
+		require.Equal(t, uint32(2), v2Pkt.Version)
+		require.Nil(t, v2Pkt.UnsignedTx)
+		require.Len(t, v2Pkt.Inputs, 2)
+		require.Len(t, v2Pkt.Outputs, 2)
+
+		// Verify v2-specific fields were populated from UnsignedTx.
+		require.Equal(t, v0Pkt.UnsignedTx.Version, v2Pkt.TxVersion)
+		for i, txIn := range v0Pkt.UnsignedTx.TxIn {
+			require.NotNil(t, v2Pkt.Inputs[i].PreviousTxID)
+			require.Equal(t, txIn.PreviousOutPoint.Hash,
+				*v2Pkt.Inputs[i].PreviousTxID)
+			require.NotNil(t, v2Pkt.Inputs[i].OutputIndex)
+			require.Equal(t, txIn.PreviousOutPoint.Index,
+				*v2Pkt.Inputs[i].OutputIndex)
+		}
+		for i, txOut := range v0Pkt.UnsignedTx.TxOut {
+			require.NotNil(t, v2Pkt.Outputs[i].Amount)
+			require.Equal(t, txOut.Value, *v2Pkt.Outputs[i].Amount)
+			require.Equal(t, txOut.PkScript, v2Pkt.Outputs[i].Script)
+		}
+
+		// Partial sigs were preserved.
+		require.Len(t, v2Pkt.Inputs[0].PartialSigs, 2)
+		require.Len(t, v2Pkt.Inputs[1].PartialSigs, 2)
+
+		// Round-trip the v2 packet.
+		var buf bytes.Buffer
+		require.NoError(t, v2Pkt.Serialize(&buf))
+
+		v2Rt, err := NewFromRawBytes(bytes.NewReader(buf.Bytes()), false)
+		require.NoError(t, err)
+		require.Equal(t, uint32(2), v2Rt.Version)
+
+		// Finalize the round-tripped v2 packet.
+		require.NoError(t, MaybeFinalizeAll(v2Rt))
+		require.True(t, v2Rt.IsComplete())
+
+		// Extract network transaction.
+		tx, err := Extract(v2Rt)
+		require.NoError(t, err)
+
+		// Serialize and compare to the known BIP-174 network tx.
+		var txBuf bytes.Buffer
+		require.NoError(t, tx.Serialize(&txBuf))
+
+		expectedTxHex := finalizerPsbtData["network"]
+		expectedTx, err := hex.DecodeString(expectedTxHex)
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, txBuf.Bytes(),
+			"extracted v2 tx must match BIP-174 network transaction")
+	})
+}
+
+// /////////////////////////////////////////////////////////////////////////////
+// Gap 5: Cross-implementation differential testing
+// /////////////////////////////////////////////////////////////////////////////
+//
+// Parses BIP-174 test vectors and verifies specific field values against
+// known expected values derived from the BIP specification, then compares
+// the extracted transaction to the BIP-174 reference network transaction.
+// This catches symmetric parse/serialize bugs where both directions agree
+// but produce incorrect results.
+
+func TestDifferentialBIP174Fields(t *testing.T) {
+	// ── Verify field values in the combined (all-sigs) PSBT ────────────
+	t.Run("combined_psbt_field_values", func(t *testing.T) {
+		b, err := hex.DecodeString(finalizerPsbtData["finalize"])
+		require.NoError(t, err)
+
+		p, err := NewFromRawBytes(bytes.NewReader(b), false)
+		require.NoError(t, err)
+
+		// Global: UnsignedTx shape
+		require.Equal(t, int32(2), p.UnsignedTx.Version)
+		require.Equal(t, uint32(0), p.UnsignedTx.LockTime)
+		require.Len(t, p.UnsignedTx.TxIn, 2)
+		require.Len(t, p.UnsignedTx.TxOut, 2)
+
+		// Input 0 outpoint (raw internal byte order, reversed from display txid):
+		var expectedHash0 chainhash.Hash
+		expHashBytes0, _ := hex.DecodeString(
+			"58e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd75")
+		copy(expectedHash0[:], expHashBytes0)
+		require.Equal(t, expectedHash0, p.UnsignedTx.TxIn[0].PreviousOutPoint.Hash)
+		require.Equal(t, uint32(0), p.UnsignedTx.TxIn[0].PreviousOutPoint.Index)
+
+		// Input 1 outpoint (raw internal byte order):
+		var expectedHash1 chainhash.Hash
+		expHashBytes1, _ := hex.DecodeString(
+			"838d0427d0ec650a68aa46bb0b098aea4422c071b2ca78352a077959d07cea1d")
+		copy(expectedHash1[:], expHashBytes1)
+		require.Equal(t, expectedHash1, p.UnsignedTx.TxIn[1].PreviousOutPoint.Hash)
+		require.Equal(t, uint32(1), p.UnsignedTx.TxIn[1].PreviousOutPoint.Index)
+
+		// Output 0: 149990000 sat to P2WPKH
+		require.Equal(t, int64(149990000), p.UnsignedTx.TxOut[0].Value)
+		require.True(t, txscript.IsPayToWitnessPubKeyHash(
+			p.UnsignedTx.TxOut[0].PkScript))
+
+		// Output 1: 100000000 sat to P2WPKH
+		require.Equal(t, int64(100000000), p.UnsignedTx.TxOut[1].Value)
+		require.True(t, txscript.IsPayToWitnessPubKeyHash(
+			p.UnsignedTx.TxOut[1].PkScript))
+
+		// Input 0: Non-witness UTXO, 2-of-2 P2SH multisig
+		require.NotNil(t, p.Inputs[0].NonWitnessUtxo)
+		require.Nil(t, p.Inputs[0].WitnessUtxo)
+		require.NotNil(t, p.Inputs[0].RedeemScript)
+		require.Nil(t, p.Inputs[0].WitnessScript)
+		require.Len(t, p.Inputs[0].PartialSigs, 2,
+			"input 0 should have 2 partial sigs (one per signer)")
+		require.Equal(t, txscript.SigHashType(1), p.Inputs[0].SighashType)
+
+		// Input 0 redeemScript: OP_2 <pub1> <pub2> OP_2 OP_CHECKMULTISIG
+		rs0 := p.Inputs[0].RedeemScript
+		require.Equal(t, byte(txscript.OP_2), rs0[0])
+		require.Equal(t, byte(txscript.OP_2), rs0[len(rs0)-2])
+		require.Equal(t, byte(txscript.OP_CHECKMULTISIG), rs0[len(rs0)-1])
+
+		// Input 1: Witness UTXO, P2SH-P2WSH 2-of-2 multisig
+		require.Nil(t, p.Inputs[1].NonWitnessUtxo)
+		require.NotNil(t, p.Inputs[1].WitnessUtxo)
+		require.NotNil(t, p.Inputs[1].RedeemScript)
+		require.NotNil(t, p.Inputs[1].WitnessScript)
+		require.Len(t, p.Inputs[1].PartialSigs, 2)
+		require.Equal(t, txscript.SigHashType(1), p.Inputs[1].SighashType)
+		require.True(t, txscript.IsPayToScriptHash(
+			p.Inputs[1].WitnessUtxo.PkScript),
+			"input 1 WitnessUtxo should be P2SH")
+
+		// Input 1 witnessScript: same 2-of-2 multisig structure
+		ws1 := p.Inputs[1].WitnessScript
+		require.Equal(t, byte(txscript.OP_2), ws1[0])
+		require.Equal(t, byte(txscript.OP_CHECKMULTISIG), ws1[len(ws1)-1])
+
+		// Partial sig pubkeys must be valid 33-byte compressed keys.
+		for idx, inp := range p.Inputs {
+			for j, ps := range inp.PartialSigs {
+				require.Len(t, ps.PubKey, 33,
+					"input %d sig %d: compressed pubkey", idx, j)
+				require.Contains(t, []byte{0x02, 0x03}, ps.PubKey[0],
+					"input %d sig %d: pubkey prefix", idx, j)
+			}
+		}
+	})
+
+	// ── Finalize + extract must match BIP-174 network tx ───────────────
+	t.Run("extracted_tx_matches_bip174_network", func(t *testing.T) {
+		b, err := hex.DecodeString(finalizerPsbtData["finalize"])
+		require.NoError(t, err)
+
+		p, err := NewFromRawBytes(bytes.NewReader(b), false)
+		require.NoError(t, err)
+		require.NoError(t, MaybeFinalizeAll(p))
+
+		tx, err := Extract(p)
+		require.NoError(t, err)
+
+		var txBuf bytes.Buffer
+		require.NoError(t, tx.Serialize(&txBuf))
+
+		expectedHex := finalizerPsbtData["network"]
+		expectedBytes, err := hex.DecodeString(expectedHex)
+		require.NoError(t, err)
+
+		require.Equal(t, expectedBytes, txBuf.Bytes(),
+			"extracted tx must byte-match BIP-174 network transaction")
+
+		// Also verify key structural properties of the extracted tx.
+		require.Equal(t, int32(2), tx.Version)
+		require.Equal(t, uint32(0), tx.LockTime)
+		require.Len(t, tx.TxIn, 2)
+		require.Len(t, tx.TxOut, 2)
+
+		// Input 0 (P2SH): scriptSig present, no witness
+		require.NotEmpty(t, tx.TxIn[0].SignatureScript)
+		require.Empty(t, tx.TxIn[0].Witness)
+
+		// Input 1 (P2SH-P2WSH): both scriptSig and witness present
+		require.NotEmpty(t, tx.TxIn[1].SignatureScript)
+		require.NotEmpty(t, tx.TxIn[1].Witness)
+	})
+
+	// ── v0 vs v2 extraction produces identical transactions ────────────
+	t.Run("v0_v2_extract_parity", func(t *testing.T) {
+		b, err := hex.DecodeString(finalizerPsbtData["finalize"])
+		require.NoError(t, err)
+
+		// Finalize v0.
+		v0, err := NewFromRawBytes(bytes.NewReader(b), false)
+		require.NoError(t, err)
+		require.NoError(t, MaybeFinalizeAll(v0))
+		txV0, err := Extract(v0)
+		require.NoError(t, err)
+
+		// Finalize v2 (via conversion).
+		v0Again, err := NewFromRawBytes(bytes.NewReader(b), false)
+		require.NoError(t, err)
+		v2, err := ConvertToV2(v0Again)
+		require.NoError(t, err)
+		require.NoError(t, MaybeFinalizeAll(v2))
+		txV2, err := Extract(v2)
+		require.NoError(t, err)
+
+		// Serialize both and compare.
+		var bufV0, bufV2 bytes.Buffer
+		require.NoError(t, txV0.Serialize(&bufV0))
+		require.NoError(t, txV2.Serialize(&bufV2))
+		require.Equal(t, bufV0.Bytes(), bufV2.Bytes(),
+			"v0 and v2 must produce identical extracted transactions")
+	})
+}
+
+// /////////////////////////////////////////////////////////////////////////////
+// BIP-174 §"Fails Signer checks"
+// /////////////////////////////////////////////////////////////////////////////
+//
+// Four PSBT vectors where the Signer role must reject due to
+// script-consistency mismatches between UTXO scriptPubKey, redeemScript,
+// and witnessScript fields. Each vector is a valid parse that should fail
+// when a signature is attempted.
+//
+// SOURCE: https://github.com/rust-bitcoin/rust-psbt/blob/main/tests/bip174-signer-checks.rs
+
+func TestBIP174SignerChecksReject(t *testing.T) {
+	// A syntactically valid DER signature + compressed public key.
+	// addPartialSignature does NOT verify the ECDSA math, only script
+	// consistency, so these just need to pass format validation.
+	dummySig, _ := hex.DecodeString(
+		"3044022074018ad4180097b873323c0015720b3684cc8123891048e7dbcd9b55ad679c99" +
+			"022073d369b740e3eb53dcefa33823c8070514ca55a7dd9544f157c167913261118c01")
+	dummyPub, _ := hex.DecodeString(
+		"029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f")
+
+	cases := []struct {
+		name      string
+		hex       string
+		failInput int // which input triggers the signer-check failure
+	}{
+		{
+			// Input 0 carries a WitnessUtxo whose scriptPubKey is
+			// P2PKH (non-witness). The p2wkh pattern check inside
+			// addPartialSignature rejects because OP_DUP OP_HASH160
+			// can never match OP_0 <20-byte-hash>.
+			name: "witness_utxo_for_non_witness_input",
+			hex: "70736274ff0100a00200000002ab0949a08c5af7c49b8212f417e2f15ab3f5c33dcf153821a8139f877a5b7be40000000000feffffffab0949a08c5af7c49b8212f417e2f15ab3f5c33dcf153821a8139f877a5b7be40100000000feffffff02603bea0b000000001976a914768a40bbd740cbe81d988e71de2a4d5c71396b1d88ac8e240000000000001976a9146f4620b553fa095e721b9ee0efe9fa039cca459788ac000000000001012" +
+				"2d3dff505000000001976a914d48ed3110b94014cb114bd32d6f4d066dc74256b88ac0001012000e1f5050000000017a9143545e6e33b832c47050f24d3eeb93c9c03948bc787010416001485d13537f2e265405a34dbafa9e3dda01fb8230800220202ead596687ca806043edc3de116cdf29d5e9257c196cd055cf698c8d02bf24e9910b4a6ba670000008000000080020000800022020394f62be9df19952c5587768aeb7698061ad2c4a25c894f47d8c162b4d7213d0510b4a6ba6700000080010000800200008000",
+			failInput: 0,
+		},
+		{
+			// Input 0's redeemScript has been modified (last byte
+			// ae→af: OP_CHECKMULTISIG→OP_CHECKMULTISIGVERIFY). Its
+			// Hash160 no longer matches the P2SH scriptPubKey in the
+			// NonWitnessUtxo.
+			name: "redeem_script_non_witness_utxo_mismatch",
+			hex: "70736274ff01009a020000000258e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd750000000000ffffffff838d0427d0ec650a68aa46bb0b098aea4422c071b2ca78352a077959d07cea1d0100000000ffffffff0270aaf00800000000160014d85c2b71d0060b09c9886aeb815e50991dda124d00e1f5050000000016001400aea9a2e5f0f876a588df5546e8742d1d87008f00000000000100bb0200000001aad73931018bd25f84ae400b68848be09db706eac2ac18298babee71ab656f8b0000000048473044022058f6fc7c6a33e1b31548d481c826c015bd30135aad42cd67790dab66d2ad243b02204a1ced2604c6735b6393e5b41691dd78b00f0c5942fb9f751856faa938157dba01feffffff0280f0fa020000000017a9140fb9463421696b82c833af241c78c17ddbde493487d0f20a270100000017a91429ca74f8a08f81999428185c97b5d852e4063f6187650000002202" +
+				"02dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d7483045022100f61038b308dc1da865a34852746f015772934208c6d24454393cd99bdf2217770220056e675a675a6d0a02b85b14e5e29074d8a25a9b5760bea2816f661910a006ea01010304010000000104475221029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f2102dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d752af2206029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f10d90c6a4f000000800000008000000080220602dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d710d90c6a4f0000008000000080010000800001012000c2eb0b0000000017a914b7f5faf40e3d40a5a459b1db3535f2b72fa921e8872202023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e73473044022065f45ba5998b59a27ffe1a7bed016af1f1f90d54b3aa8f7450aa5f56a25103bd02207f724703ad1edb96680b284b56d4ffcb88f7fb759eabbe08aa30f29b851383d2010103040100000001042200208c2353173743b595dfb4a07b72ba8e42e3797da74e87fe7d9d7497e3b2028903010547522103089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc21023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7352ae2206023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7310d90c6a4f000000800000008003000080220603089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc10d90c6a4f00000080000000800200008000220203a9a4c37f5996d3aa25dbac6b570af0650394492942460b354753ed9eeca5877110d90c6a4f000000800000008004000080002202027f6399757d2eff55a136ad02c684b1838b6556e5f1b6b34282a94b6b5005109610d90c6a4f00000080000000800500008000",
+			failInput: 0,
+		},
+		{
+			// Input 1's redeemScript has been modified (last byte
+			// 03→00 in the P2WSH program). Its Hash160 no longer
+			// matches the P2SH scriptPubKey in the WitnessUtxo.
+			name: "redeem_script_witness_utxo_mismatch",
+			hex: "70736274ff01009a020000000258e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd750000000000ffffffff838d0427d0ec650a68aa46bb0b098aea4422c071b2ca78352a077959d07cea1d0100000000ffffffff0270aaf00800000000160014d85c2b71d0060b09c9886aeb815e50991dda124d00e1f5050000000016001400aea9a2e5f0f876a588df5546e8742d1d87008f00000000000100bb0200000001aad73931018bd25f84ae400b68848be09db706eac2ac18298babee71ab656f8b0000000048473044022058f6fc7c6a33e1b31548d481c826c015bd30135aad42cd67790dab66d2ad243b02204a1ced2604c6735b6393e5b41691dd78b00f0c5942fb9f751856faa938157dba01feffffff0280f0fa020000000017a9140fb9463421696b82c833af241c78c17ddbde493487d0f20a270100000017a91429ca74f8a08f81999428185c97b5d852e4063f6187650000002202" +
+				"02dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d7483045022100f61038b308dc1da865a34852746f015772934208c6d24454393cd99bdf2217770220056e675a675a6d0a02b85b14e5e29074d8a25a9b5760bea2816f661910a006ea01010304010000000104475221029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f2102dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d752ae2206029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f10d90c6a4f000000800000008000000080220602dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d710d90c6a4f0000008000000080010000800001012000c2eb0b0000000017a914b7f5faf40e3d40a5a459b1db3535f2b72fa921e8872202023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e73473044022065f45ba5998b59a27ffe1a7bed016af1f1f90d54b3aa8f7450aa5f56a25103bd02207f724703ad1edb96680b284b56d4ffcb88f7fb759eabbe08aa30f29b851383d2010103040100000001042200208c2353173743b595dfb4a07b72ba8e42e3797da74e87fe7d9d7497e3b2028900010547522103089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc21023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7352ae2206023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7310d90c6a4f000000800000008003000080220603089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc10d90c6a4f00000080000000800200008000220203a9a4c37f5996d3aa25dbac6b570af0650394492942460b354753ed9eeca5877110d90c6a4f000000800000008004000080002202027f6399757d2eff55a136ad02c684b1838b6556e5f1b6b34282a94b6b5005109610d90c6a4f00000080000000800500008000",
+			failInput: 1,
+		},
+		{
+			// Input 1's witnessScript has been modified (last byte
+			// ae→ad: OP_CHECKMULTISIG→OP_CHECKMULTISIGVERIFY). Its
+			// SHA256 no longer matches the P2WSH hash embedded in
+			// the redeemScript.
+			name: "witness_script_witness_utxo_mismatch",
+			hex: "70736274ff01009a020000000258e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd750000000000ffffffff838d0427d0ec650a68aa46bb0b098aea4422c071b2ca78352a077959d07cea1d0100000000ffffffff0270aaf00800000000160014d85c2b71d0060b09c9886aeb815e50991dda124d00e1f5050000000016001400aea9a2e5f0f876a588df5546e8742d1d87008f00000000000100bb0200000001aad73931018bd25f84ae400b68848be09db706eac2ac18298babee71ab656f8b0000000048473044022058f6fc7c6a33e1b31548d481c826c015bd30135aad42cd67790dab66d2ad243b02204a1ced2604c6735b6393e5b41691dd78b00f0c5942fb9f751856faa938157dba01feffffff0280f0fa020000000017a9140fb9463421696b82c833af241c78c17ddbde493487d0f20a270100000017a91429ca74f8a08f81999428185c97b5d852e4063f6187650000002202" +
+				"02dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d7483045022100f61038b308dc1da865a34852746f015772934208c6d24454393cd99bdf2217770220056e675a675a6d0a02b85b14e5e29074d8a25a9b5760bea2816f661910a006ea01010304010000000104475221029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f2102dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d752ae2206029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f10d90c6a4f000000800000008000000080220602dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d710d90c6a4f0000008000000080010000800001012000c2eb0b0000000017a914b7f5faf40e3d40a5a459b1db3535f2b72fa921e8872202023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e73473044022065f45ba5998b59a27ffe1a7bed016af1f1f90d54b3aa8f7450aa5f56a25103bd02207f724703ad1edb96680b284b56d4ffcb88f7fb759eabbe08aa30f29b851383d2010103040100000001042200208c2353173743b595dfb4a07b72ba8e42e3797da74e87fe7d9d7497e3b2028903010547522103089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc21023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7352ad2206023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7310d90c6a4f000000800000008003000080220603089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc10d90c6a4f00000080000000800200008000220203a9a4c37f5996d3aa25dbac6b570af0650394492942460b354753ed9eeca5877110d90c6a4f000000800000008004000080002202027f6399757d2eff55a136ad02c684b1838b6556e5f1b6b34282a94b6b5005109610d90c6a4f00000080000000800500008000",
+			failInput: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := hex.DecodeString(tc.hex)
+			require.NoError(t, err, "hex decode")
+
+			p, err := NewFromRawBytes(bytes.NewReader(b), false)
+			require.NoError(t, err, "parse PSBT")
+
+			u, err := NewUpdater(p)
+			require.NoError(t, err, "create updater")
+
+			_, err = u.Sign(tc.failInput, dummySig, dummyPub, nil, nil)
+			require.ErrorIs(t, err, ErrInvalidSignatureForInput,
+				"input %d should fail signer checks", tc.failInput)
+		})
+	}
+}
+
+// /////////////////////////////////////////////////////////////////////////////
+// Gap 6: Fuzz testing for the parser
+// /////////////////////////////////////////////////////////////////////////////
+//
+// Feeds random bytes to NewFromRawBytes and exercises serialize + SanityCheck
+// on anything that parses. The goal is to catch panics, infinite loops, and
+// OOM on malformed input — not to validate correctness (the unit tests do
+// that).
+//
+// Run: go test -fuzz=FuzzParsePacket -fuzztime=30s
+
+func FuzzParsePacket(f *testing.F) {
+	// Seed with the PSBT magic prefix (bare minimum).
+	f.Add([]byte{0x70, 0x73, 0x62, 0x74, 0xff})
+
+	// Seed with a minimal valid v0 PSBT (one segwit input, one output).
+	if b, err := hex.DecodeString(
+		"70736274ff01005202000000016d41e6873367c23c3e5f8b2c61a97de59cba" +
+			"fe5dbc10878d8b4cb184a17e57920000000000ffffffff0100f90295000000" +
+			"001976a914389ffce9cd9ae88dcc0631e88a821ffdbe9bfe2688ac000000000000"); err == nil {
+		f.Add(b)
+	}
+
+	// Seed with a known BIP-174 PSBT.
+	if b, err := hex.DecodeString(finalizerPsbtData["finalize"]); err == nil {
+		f.Add(b)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		p, err := NewFromRawBytes(bytes.NewReader(data), false)
+		if err != nil {
+			return
+		}
+
+		// If it parsed, exercising serialize and sanity-check must not
+		// panic.
+		var buf bytes.Buffer
+		_ = p.Serialize(&buf)
+		_ = p.SanityCheck()
+
+		// Also exercise B64 path.
+		_, _ = p.B64Encode()
+
+		// Try conversion helpers (only on the correct version).
+		switch p.Version {
+		case 0:
+			_, _ = ConvertToV2(p)
+		case 2:
+			_, _ = ConvertToV0(p)
+		}
+	})
 }

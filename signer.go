@@ -18,9 +18,9 @@ import (
 type SignOutcome int
 
 const (
-	// SignSuccesful indicates that the partial signature was successfully
+	// SignSuccessful indicates that the partial signature was successfully
 	// attached.
-	SignSuccesful = 0
+	SignSuccessful = 0
 
 	// SignFinalized  indicates that this input is already finalized, so the
 	// provided signature was *not* attached
@@ -154,7 +154,7 @@ func (u *Updater) Sign(inIndex int, sig []byte, pubKey []byte,
 		}
 	}
 
-	return SignSuccesful, nil
+	return SignSuccessful, nil
 }
 
 // nonWitnessToWitness extracts the TxOut from the existing NonWitnessUtxo
