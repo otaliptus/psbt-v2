@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PSBT Playground</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="loading">
+    <p>Loading WASM...</p>
+  </div>
+  <div id="app" style="display:none;">
+    <p>PSBT Playground loaded.</p>
+  </div>
+
+  <script src="wasm_exec.js"></script>
+  <script>
+    const go = new Go();
+    WebAssembly.instantiateStreaming(fetch("psbt.wasm"), go.importObject)
+      .then(result => {
+        go.run(result.instance);
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("app").style.display = "block";
+        console.log("WASM bridge:", psbtPing());
+      })
+      .catch(err => {
+        document.getElementById("loading").textContent =
+          "Failed to load WASM: " + err.message;
+      });
+  </script>
+</body>
+</html>
