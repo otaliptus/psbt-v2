@@ -7,26 +7,128 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="loading">
-    <p>Loading WASM...</p>
-  </div>
+  <div id="loading"><p>Loading WASM...</p></div>
   <div id="app" style="display:none;">
-    <p>PSBT Playground loaded.</p>
+    <!-- Header bar -->
+    <div class="header">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="header-logo">P2</div>
+        <span class="header-title">PSBT Playground</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="header-badge" id="wasm-status">WASM loaded</span>
+        <span class="header-meta">go-psbt-v2</span>
+      </div>
+    </div>
+    <div class="container">
+      <!-- Zone 1: Import/Create -->
+      <div class="zone">
+        <div class="import-row">
+          <textarea id="input-psbt" placeholder="Paste PSBT hex or base64..."></textarea>
+          <div class="import-buttons">
+            <button class="btn btn-primary" id="btn-parse">Parse</button>
+            <button class="btn btn-amber" id="btn-new-v2">New v2</button>
+          </div>
+        </div>
+      </div>
+      <!-- Error banner -->
+      <div id="error-banner" class="error-banner" style="display:none;">
+        <span class="error-msg"></span>
+        <button class="error-dismiss" id="btn-dismiss-error">x</button>
+      </div>
+      <!-- Empty state -->
+      <div id="empty-state" class="empty-state">
+        <p>Parse an existing PSBT or create a new v2 packet to get started.</p>
+      </div>
+      <!-- Zone 2: Packet View -->
+      <div class="zone" id="packet-view" style="display:none;">
+        <div class="packet-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="packet-title">Packet</span>
+            <span class="version-badge" id="version-badge">PSBTv2</span>
+          </div>
+          <div class="convert-buttons">
+            <button class="btn-sm" id="btn-convert-v0">Convert to v0</button>
+            <button class="btn-sm" id="btn-convert-v2">Convert to v2</button>
+          </div>
+        </div>
+        <div class="global-fields">
+          <div class="zone-label">Global Fields</div>
+          <div id="global-fields" class="chip-row"></div>
+        </div>
+        <!-- Inputs section -->
+        <div style="margin-bottom:16px;">
+          <div class="section-header">
+            <div class="section-title">
+              <div class="section-bar blue"></div>
+              <span class="section-name">Inputs</span>
+              <span class="section-count" id="input-count">0</span>
+            </div>
+            <button class="btn-sm btn-add-input" id="btn-add-input">+ Add Input</button>
+          </div>
+          <div id="inputs-container"></div>
+        </div>
+        <!-- Outputs section -->
+        <div>
+          <div class="section-header">
+            <div class="section-title">
+              <div class="section-bar purple"></div>
+              <span class="section-name">Outputs</span>
+              <span class="section-count" id="output-count">0</span>
+            </div>
+            <button class="btn-sm btn-add-output" id="btn-add-output">+ Add Output</button>
+          </div>
+          <div id="outputs-container"></div>
+        </div>
+      </div>
+      <!-- Zone 3: Lifecycle/Export -->
+      <div class="zone" id="lifecycle-zone" style="display:none;">
+        <div class="lifecycle-row">
+          <div class="lifecycle-section">
+            <div class="zone-label">Lifecycle</div>
+            <div class="sign-controls">
+              <select id="sign-input-select"></select>
+              <select id="sign-key-select">
+                <option value="0">Key 0</option>
+                <option value="1">Key 1</option>
+                <option value="2">Key 2</option>
+              </select>
+            </div>
+            <div class="lifecycle-buttons">
+              <button class="btn btn-green" id="btn-sign">Sign</button>
+              <button class="btn btn-purple" id="btn-finalize">Finalize</button>
+              <button class="btn btn-extract" id="btn-extract">Extract Tx</button>
+            </div>
+          </div>
+          <div class="lifecycle-section">
+            <div class="zone-label">Export</div>
+            <div class="export-row">
+              <div class="export-block" id="export-data"></div>
+              <div class="export-buttons">
+                <button class="btn-sm" id="btn-export-hex">Hex</button>
+                <button class="btn-sm" id="btn-export-b64">B64</button>
+                <button class="btn-sm" id="btn-copy">Copy</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
-
   <script src="wasm_exec.js"></script>
+  <script src="bridge.js"></script>
+  <script src="app.js"></script>
   <script>
-    const go = new Go();
+    var go = new Go();
     WebAssembly.instantiateStreaming(fetch("psbt.wasm"), go.importObject)
-      .then(result => {
+      .then(function(result) {
         go.run(result.instance);
         document.getElementById("loading").style.display = "none";
         document.getElementById("app").style.display = "block";
-        console.log("WASM bridge:", psbtPing());
+        init();
       })
-      .catch(err => {
-        document.getElementById("loading").textContent =
-          "Failed to load WASM: " + err.message;
+      .catch(function(err) {
+        document.getElementById("loading").textContent = "Failed to load WASM: " + err.message;
       });
   </script>
 </body>
