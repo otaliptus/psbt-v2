@@ -112,6 +112,18 @@ v0Pkt, _ := psbt.ConvertToV0(v2Pkt)
 // Both return deep copies — mutating the result won't affect the source.
 ```
 
+### Playground
+
+A browser-based visual PSBT builder that runs the library via WebAssembly. No backend -- everything runs client-side.
+
+```sh
+cd playground
+make serve        # builds WASM + starts local server
+# open http://localhost:8080
+```
+
+Features: parse/inspect PSBTs, create v2 packets, add/remove inputs and outputs, sign with test keys, finalize, extract raw transactions, convert between v0 and v2.
+
 ### Status
 
 | BIP-370 Role | Status |
