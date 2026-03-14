@@ -557,20 +557,6 @@ body {
   flex-wrap: wrap;
 }
 
-.sign-controls {
-  display: flex;
-  gap: 8px;
-}
-
-.sign-controls select {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 12px;
-  background: var(--input-bg);
-  color: var(--text);
-}
-
 .export-row {
   display: flex;
   flex-direction: column;
@@ -673,6 +659,272 @@ body {
   color: var(--text-muted);
 }
 
+/* ---- Clear button ---- */
+.btn-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  border: 1px solid rgba(241,245,249,0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  color: #94a3b8;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-clear:hover {
+  background: rgba(241,245,249,0.1);
+  color: #f1f5f9;
+}
+
+/* ---- Button with subtitle ---- */
+.btn .btn-main-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.btn .btn-subtitle {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.85;
+  margin-top: 2px;
+  white-space: normal;
+  line-height: 1.3;
+}
+
+.btn-amber {
+  flex-direction: column;
+  text-align: center;
+  padding: 8px 14px;
+}
+
+/* ---- Empty state title/tagline ---- */
+.empty-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.empty-tagline {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+/* ---- Demo CTA in examples ---- */
+.demo-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--chip-bg);
+}
+
+.demo-cta-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.btn-demo-cta {
+  padding: 6px 16px;
+}
+
+.btn-demo-cta .btn-main-label {
+  font-size: 13px;
+}
+
+/* ---- Convert button notes ---- */
+.convert-btn {
+  flex-direction: column;
+  text-align: center;
+  gap: 2px;
+  padding: 6px 12px;
+}
+
+.convert-note {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: normal;
+  line-height: 1.3;
+  max-width: 180px;
+}
+
+/* ---- Workflow progress indicator ---- */
+.workflow-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 16px;
+  padding: 10px 0;
+}
+
+.wf-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+}
+
+.wf-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--chip-bg);
+  border: 2px solid var(--border);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.wf-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+
+.wf-connector {
+  flex: 1;
+  height: 2px;
+  min-width: 24px;
+  background: var(--border);
+  margin-top: -14px;
+  transition: background 0.2s;
+}
+
+.wf-step.completed .wf-dot {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.wf-step.completed .wf-label {
+  color: var(--green);
+}
+
+.wf-step.active .wf-dot {
+  background: var(--blue);
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+}
+
+.wf-step.active .wf-label {
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.wf-connector.completed {
+  background: var(--green);
+}
+
+/* ---- Inline sign button on input cards ---- */
+.input-sign-action {
+  margin-top: 8px;
+}
+
+.btn-sign-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  border: 1px solid var(--green);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(34,197,94,0.08);
+  color: var(--green);
+  transition: background 0.15s;
+}
+
+.btn-sign-inline:hover {
+  background: rgba(34,197,94,0.16);
+}
+
+.sign-dropdown-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sign-dropdown-inline select {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+/* ---- Contextual hints on input cards ---- */
+.input-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  font-style: italic;
+}
+
+.input-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.input-status-indicator.signed-indicator {
+  color: var(--green);
+}
+
+.input-status-indicator.finalized-indicator {
+  color: var(--blue);
+}
+
+.checkmark-icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: currentColor;
+  position: relative;
+}
+
+.checkmark-icon::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ---- Export placeholder ---- */
+.export-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 12px;
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 640px) {
   .header {
@@ -697,9 +949,5 @@ body {
 
   .lifecycle-row {
     grid-template-columns: 1fr;
-  }
-
-  .sign-controls {
-    flex-direction: column;
   }
 }

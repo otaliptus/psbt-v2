@@ -16,6 +16,7 @@
         <span class="header-title">PSBT Playground</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
+        <button class="btn-clear" id="btn-clear" style="display:none;">Clear</button>
         <span class="header-badge" id="wasm-status">WASM loaded</span>
         <span class="header-meta">go-psbt-v2</span>
       </div>
@@ -27,7 +28,10 @@
           <textarea id="input-psbt" placeholder="Paste PSBT hex or base64..."></textarea>
           <div class="import-buttons">
             <button class="btn btn-primary" id="btn-parse">Parse</button>
-            <button class="btn btn-amber" id="btn-new-v2">New v2</button>
+            <button class="btn btn-amber" id="btn-new-v2">
+              <span class="btn-main-label">Try Demo</span>
+              <span class="btn-subtitle">Pre-built v2 packet with 2 inputs ready to sign</span>
+            </button>
           </div>
         </div>
       </div>
@@ -38,22 +42,48 @@
       </div>
       <!-- Empty state with examples -->
       <div id="empty-state" class="empty-state">
-        <p>Parse an existing PSBT or create a new v2 packet to get started.</p>
+        <p class="empty-title">PSBT Playground</p>
+        <p class="empty-tagline">Inspect, build, sign, and convert Bitcoin PSBTs -- all in your browser via WebAssembly.</p>
+        <p>Parse an existing PSBT or try a pre-built demo to get started.</p>
         <div class="examples-section">
+          <div class="demo-cta">
+            <span class="demo-cta-text">or try a pre-built demo</span>
+            <button class="btn btn-amber btn-demo-cta" id="btn-demo-cta">
+              <span class="btn-main-label">Try Demo</span>
+            </button>
+          </div>
           <div class="zone-label" style="margin-top:20px;">Examples from BIP-174 and BIP-370 test vectors</div>
           <div id="examples-list" class="examples-list"></div>
         </div>
       </div>
       <!-- Zone 2: Packet View -->
       <div class="zone" id="packet-view" style="display:none;">
+        <!-- Workflow progress indicator -->
+        <div class="workflow-steps" id="workflow-steps">
+          <div class="wf-step" data-step="create"><span class="wf-dot"></span><span class="wf-label">Create</span></div>
+          <div class="wf-connector"></div>
+          <div class="wf-step" data-step="update"><span class="wf-dot"></span><span class="wf-label">Update</span></div>
+          <div class="wf-connector"></div>
+          <div class="wf-step" data-step="sign"><span class="wf-dot"></span><span class="wf-label">Sign</span></div>
+          <div class="wf-connector"></div>
+          <div class="wf-step" data-step="finalize"><span class="wf-dot"></span><span class="wf-label">Finalize</span></div>
+          <div class="wf-connector"></div>
+          <div class="wf-step" data-step="extract"><span class="wf-dot"></span><span class="wf-label">Extract</span></div>
+        </div>
         <div class="packet-header">
           <div style="display:flex;align-items:center;gap:10px;">
             <span class="packet-title">Packet</span>
             <span class="version-badge" id="version-badge">PSBTv2</span>
           </div>
           <div class="convert-buttons">
-            <button class="btn-sm" id="btn-convert-v0">Convert to v0</button>
-            <button class="btn-sm" id="btn-convert-v2">Convert to v2</button>
+            <button class="btn-sm convert-btn" id="btn-convert-v0">
+              <span>Convert to v0</span>
+              <span class="convert-note">(lossy -- drops modifiable flags, per-input locktimes)</span>
+            </button>
+            <button class="btn-sm convert-btn" id="btn-convert-v2">
+              <span>Convert to v2</span>
+              <span class="convert-note">(lossless)</span>
+            </button>
           </div>
         </div>
         <div class="global-fields">
@@ -90,24 +120,17 @@
         <div class="lifecycle-row">
           <div class="lifecycle-section">
             <div class="zone-label">Lifecycle</div>
-            <div class="sign-controls">
-              <select id="sign-input-select"></select>
-              <select id="sign-key-select">
-                <option value="0">Key 0</option>
-                <option value="1">Key 1</option>
-                <option value="2">Key 2</option>
-              </select>
-            </div>
             <div class="lifecycle-buttons">
-              <button class="btn btn-green" id="btn-sign">Sign</button>
               <button class="btn btn-purple" id="btn-finalize">Finalize</button>
               <button class="btn btn-extract" id="btn-extract">Extract Tx</button>
             </div>
           </div>
           <div class="lifecycle-section">
-            <div class="zone-label">Export</div>
+            <div class="zone-label" id="export-label">Export</div>
             <div class="export-row">
-              <div class="export-block" id="export-data"></div>
+              <div class="export-block" id="export-data">
+                <span class="export-placeholder">Click Hex or B64 to export the current PSBT, or Extract to get the signed transaction</span>
+              </div>
               <div class="export-buttons">
                 <button class="btn-sm" id="btn-export-hex">Hex</button>
                 <button class="btn-sm" id="btn-export-b64">B64</button>

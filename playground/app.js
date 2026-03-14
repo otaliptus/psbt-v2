@@ -2,7 +2,7 @@
 // Uses safe DOM methods (createElement, textContent, appendChild, replaceChildren).
 // No innerHTML with parsed data.
 
-var state = { packet: null, hex: null, error: null, exportData: null };
+var state = { packet: null, hex: null, error: null, exportData: null, exportLabel: null, isPreset: false };
 
 // ---------------------------------------------------------------------------
 // Example PSBTs from BIP-174 and BIP-370 test vectors
@@ -73,6 +73,56 @@ function modFlagsText(flags) {
   return parts.join("+");
 }
 
+function formatSats(n) {
+  if (n === null || n === undefined) return "0";
+  return Number(n).toLocaleString();
+}
+
+// ---------------------------------------------------------------------------
+// Workflow step computation
+// ---------------------------------------------------------------------------
+
+function computeWorkflowStep(pkt) {
+  if (!pkt || !pkt.inputs || pkt.inputs.length === 0) return "create";
+  var allFinalized = true;
+  var someSigned = false;
+  var allUnsigned = true;
+  for (var i = 0; i < pkt.inputs.length; i++) {
+    var inp = pkt.inputs[i];
+    if (inp.status !== "finalized") allFinalized = false;
+    if (inp.status === "signed") someSigned = true;
+    if (inp.status !== "unsigned") allUnsigned = false;
+  }
+  if (state.exportLabel === "Raw Transaction (hex)") return "extract";
+  if (allFinalized) return "finalize";
+  if (someSigned) return "sign";
+  if (allUnsigned) return "update";
+  return "update";
+}
+
+function renderWorkflowSteps(currentStep) {
+  var steps = ["create", "update", "sign", "finalize", "extract"];
+  var currentIdx = steps.indexOf(currentStep);
+  var stepEls = document.querySelectorAll(".wf-step");
+  var connectorEls = document.querySelectorAll(".wf-connector");
+  for (var i = 0; i < stepEls.length; i++) {
+    stepEls[i].className = "wf-step";
+    var stepName = stepEls[i].getAttribute("data-step");
+    var stepIdx = steps.indexOf(stepName);
+    if (stepIdx < currentIdx) {
+      stepEls[i].className = "wf-step completed";
+    } else if (stepIdx === currentIdx) {
+      stepEls[i].className = "wf-step active";
+    }
+  }
+  for (var j = 0; j < connectorEls.length; j++) {
+    connectorEls[j].className = "wf-connector";
+    if (j < currentIdx) {
+      connectorEls[j].className = "wf-connector completed";
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Input card
 // ---------------------------------------------------------------------------
@@ -107,10 +157,10 @@ function createInputCard(input, index) {
   fields.appendChild(voutLine);
   card.appendChild(fields);
 
-  // UTXO row
+  // UTXO row — formatted
   if (input.witnessUtxo) {
     var utxo = el("div", "utxo-row");
-    utxo.appendChild(document.createTextNode("UTXO: " + input.witnessUtxo.value + " sats"));
+    utxo.appendChild(document.createTextNode("UTXO: " + formatSats(input.witnessUtxo.value) + " sats"));
     card.appendChild(utxo);
   }
 
@@ -127,6 +177,57 @@ function createInputCard(input, index) {
     sigLabel.style.color = "var(--text-muted)";
     sigLabel.textContent = "Sigs: " + sigCount;
     card.appendChild(sigLabel);
+  }
+
+  // Contextual hints and inline sign buttons
+  if (input.status === "finalized") {
+    var finHint = el("div", "input-status-indicator finalized-indicator");
+    var finIcon = el("span", "checkmark-icon");
+    finHint.appendChild(finIcon);
+    finHint.appendChild(document.createTextNode(" Finalized -- ready for extraction"));
+    card.appendChild(finHint);
+  } else if (input.status === "signed") {
+    var signedHint = el("div", "input-status-indicator signed-indicator");
+    var signedIcon = el("span", "checkmark-icon");
+    signedHint.appendChild(signedIcon);
+    signedHint.appendChild(document.createTextNode(" Signed"));
+    card.appendChild(signedHint);
+  } else if (input.status === "unsigned") {
+    if (!input.witnessUtxo) {
+      // No UTXO data — hint
+      card.appendChild(el("div", "input-hint", "Needs UTXO data before signing"));
+    } else {
+      // Has UTXO — show sign button
+      var signAction = el("div", "input-sign-action");
+      if (state.isPreset) {
+        // Preset: we know key mapping (input N -> key N)
+        var signBtn = el("button", "btn-sign-inline", "Sign with Key " + index);
+        signBtn.addEventListener("click", (function(inputIdx, keyIdx) {
+          return function() { handleSignInline(inputIdx, keyIdx); };
+        })(index, index));
+        signAction.appendChild(signBtn);
+      } else {
+        // Parsed/unknown: show dropdown
+        var dropdown = el("div", "sign-dropdown-inline");
+        var keySelect = document.createElement("select");
+        for (var k = 0; k < 3; k++) {
+          var opt = el("option", null, "Key " + k);
+          opt.value = String(k);
+          keySelect.appendChild(opt);
+        }
+        dropdown.appendChild(keySelect);
+        var signDropBtn = el("button", "btn-sign-inline", "Sign");
+        signDropBtn.addEventListener("click", (function(inputIdx, selectEl) {
+          return function() {
+            var keyIdx = parseInt(selectEl.value, 10);
+            handleSignInline(inputIdx, keyIdx);
+          };
+        })(index, keySelect));
+        dropdown.appendChild(signDropBtn);
+        signAction.appendChild(dropdown);
+      }
+      card.appendChild(signAction);
+    }
   }
 
   // Details
@@ -165,7 +266,7 @@ function createOutputCard(output, index) {
   var headerLeft = el("div", "input-header-left");
   headerLeft.appendChild(el("span", "idx-badge", String(index)));
   var amountSpan = el("span", "output-amount");
-  amountSpan.appendChild(document.createTextNode(String(output.amount)));
+  amountSpan.appendChild(document.createTextNode(formatSats(output.amount)));
   var satsSpan = el("span", "output-sats", " sats");
   amountSpan.appendChild(satsSpan);
   headerLeft.appendChild(amountSpan);
@@ -210,7 +311,7 @@ function loadExample(index) {
   if (!ex) return;
   var result = PSBT.parse(ex.data);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: false };
   } else {
     state.error = result.error;
   }
@@ -222,7 +323,7 @@ function handleParse() {
   if (!input) return;
   var result = PSBT.parse(input);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: false };
   } else {
     state.error = result.error;
   }
@@ -232,10 +333,16 @@ function handleParse() {
 function handleNewV2() {
   var result = PSBT.newV2Preset();
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: true };
   } else {
     state.error = result.error;
   }
+  render();
+}
+
+function handleClear() {
+  state = { packet: null, hex: null, error: null, exportData: null, exportLabel: null, isPreset: false };
+  document.getElementById("input-psbt").value = "";
   render();
 }
 
@@ -243,7 +350,7 @@ function handleConvertToV2() {
   if (!state.hex) return;
   var result = PSBT.convertToV2(state.hex);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: state.isPreset };
   } else {
     state.error = result.error;
   }
@@ -254,7 +361,7 @@ function handleConvertToV0() {
   if (!state.hex) return;
   var result = PSBT.convertToV0(state.hex);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: state.isPreset };
   } else {
     state.error = result.error;
   }
@@ -268,7 +375,7 @@ function handleAddInput() {
   for (var i = 0; i < 32; i++) zeroTxid += "00";
   var result = PSBT.addInput(state.hex, zeroTxid, 0);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: false };
   } else {
     state.error = result.error;
   }
@@ -282,7 +389,7 @@ function handleAddOutput() {
   for (var i = 0; i < 20; i++) dummyScript += "00";
   var result = PSBT.addOutput(state.hex, 10000, dummyScript);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: state.isPreset };
   } else {
     state.error = result.error;
   }
@@ -293,7 +400,7 @@ function handleRemoveInput(index) {
   if (!state.hex) return;
   var result = PSBT.removeInput(state.hex, index);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: false };
   } else {
     state.error = result.error;
   }
@@ -304,20 +411,18 @@ function handleRemoveOutput(index) {
   if (!state.hex) return;
   var result = PSBT.removeOutput(state.hex, index);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: state.isPreset };
   } else {
     state.error = result.error;
   }
   render();
 }
 
-function handleSign() {
+function handleSignInline(inputIdx, keyIdx) {
   if (!state.hex) return;
-  var inputIdx = parseInt(document.getElementById("sign-input-select").value, 10);
-  var keyIdx = parseInt(document.getElementById("sign-key-select").value, 10);
   var result = PSBT.sign(state.hex, inputIdx, keyIdx);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: state.isPreset };
   } else {
     state.error = result.error;
   }
@@ -328,7 +433,7 @@ function handleFinalize() {
   if (!state.hex) return;
   var result = PSBT.finalize(state.hex);
   if (result.ok) {
-    state = { packet: result.packet, hex: result.hex, error: null, exportData: null };
+    state = { packet: result.packet, hex: result.hex, error: null, exportData: null, exportLabel: null, isPreset: state.isPreset };
   } else {
     state.error = result.error;
   }
@@ -340,6 +445,7 @@ function handleExtract() {
   var result = PSBT.extract(state.hex);
   if (result.ok) {
     state.exportData = result.rawTx;
+    state.exportLabel = "Raw Transaction (hex)";
     state.error = null;
   } else {
     state.error = result.error;
@@ -352,6 +458,7 @@ function handleExport(format) {
   var result = PSBT.serialize(state.hex, format);
   if (result.ok) {
     state.exportData = result.data;
+    state.exportLabel = format === "hex" ? "PSBT (hex)" : "PSBT (base64)";
     state.error = null;
   } else {
     state.error = result.error;
@@ -390,6 +497,12 @@ function render() {
     errorMsg.textContent = "";
   }
 
+  // Clear button visibility
+  var btnClear = document.getElementById("btn-clear");
+  if (btnClear) {
+    btnClear.style.display = pkt ? "inline-flex" : "none";
+  }
+
   // Empty state / packet view / lifecycle zone
   var emptyState = document.getElementById("empty-state");
   var packetView = document.getElementById("packet-view");
@@ -407,6 +520,10 @@ function render() {
   packetView.style.display = "block";
   lifecycleZone.style.display = "block";
 
+  // Workflow progress
+  var currentStep = computeWorkflowStep(pkt);
+  renderWorkflowSteps(currentStep);
+
   // Version badge
   var versionBadge = document.getElementById("version-badge");
   versionBadge.textContent = "PSBTv" + pkt.version;
@@ -417,7 +534,7 @@ function render() {
   btnConvertV0.disabled = (pkt.version === 0);
   btnConvertV2.disabled = (pkt.version === 2);
 
-  // Global fields
+  // Global fields — with formatted numbers
   var globalFields = document.getElementById("global-fields");
   var chips = [];
   chips.push(createChip("Version", String(pkt.version)));
@@ -429,7 +546,7 @@ function render() {
     chips.push(createChip("Computed Lock", String(pkt.computedLocktime)));
   }
   if (pkt.fee !== null && pkt.fee !== undefined) {
-    chips.push(createChip("Fee", pkt.fee + " sats"));
+    chips.push(createChip("Fee", formatSats(pkt.fee) + " sats"));
   }
   if (pkt.txModifiable !== null && pkt.txModifiable !== undefined) {
     var modChip = el("span", "mod-badge", "Modifiable: " + modFlagsText(pkt.txModifiable));
@@ -467,24 +584,22 @@ function render() {
   document.getElementById("btn-add-input").disabled = !canModifyInputs;
   document.getElementById("btn-add-output").disabled = !canModifyOutputs;
 
-  // Sign input select
-  var signSelect = document.getElementById("sign-input-select");
-  var currentVal = signSelect.value;
-  var options = [];
-  for (var k = 0; k < pkt.inputs.length; k++) {
-    var opt = el("option", null, "Input " + k);
-    opt.value = String(k);
-    options.push(opt);
-  }
-  signSelect.replaceChildren.apply(signSelect, options);
-  // Restore selection if still valid
-  if (currentVal && parseInt(currentVal, 10) < pkt.inputs.length) {
-    signSelect.value = currentVal;
-  }
-
-  // Export data
+  // Export section
   var exportBlock = document.getElementById("export-data");
-  exportBlock.textContent = state.exportData || "";
+  var exportLabel = document.getElementById("export-label");
+  if (state.exportData) {
+    exportBlock.textContent = state.exportData;
+    if (exportLabel && state.exportLabel) {
+      exportLabel.textContent = state.exportLabel;
+    }
+  } else {
+    exportBlock.replaceChildren();
+    var placeholder = el("span", "export-placeholder", "Click Hex or B64 to export the current PSBT, or Extract to get the signed transaction");
+    exportBlock.appendChild(placeholder);
+    if (exportLabel) {
+      exportLabel.textContent = "Export";
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -494,11 +609,12 @@ function render() {
 function init() {
   document.getElementById("btn-parse").addEventListener("click", handleParse);
   document.getElementById("btn-new-v2").addEventListener("click", handleNewV2);
+  document.getElementById("btn-clear").addEventListener("click", handleClear);
+  document.getElementById("btn-demo-cta").addEventListener("click", handleNewV2);
   document.getElementById("btn-convert-v0").addEventListener("click", handleConvertToV0);
   document.getElementById("btn-convert-v2").addEventListener("click", handleConvertToV2);
   document.getElementById("btn-add-input").addEventListener("click", handleAddInput);
   document.getElementById("btn-add-output").addEventListener("click", handleAddOutput);
-  document.getElementById("btn-sign").addEventListener("click", handleSign);
   document.getElementById("btn-finalize").addEventListener("click", handleFinalize);
   document.getElementById("btn-extract").addEventListener("click", handleExtract);
   document.getElementById("btn-export-hex").addEventListener("click", function() { handleExport("hex"); });
