@@ -10,3 +10,6 @@ test.out
 lint.out
 
 experimental/
+
+playground/psbt.wasm
+playground/wasm_exec.js
