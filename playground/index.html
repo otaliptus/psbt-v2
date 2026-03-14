@@ -36,9 +36,13 @@
         <span class="error-msg"></span>
         <button class="error-dismiss" id="btn-dismiss-error">x</button>
       </div>
-      <!-- Empty state -->
+      <!-- Empty state with examples -->
       <div id="empty-state" class="empty-state">
         <p>Parse an existing PSBT or create a new v2 packet to get started.</p>
+        <div class="examples-section">
+          <div class="zone-label" style="margin-top:20px;">Examples from BIP-174 and BIP-370 test vectors</div>
+          <div id="examples-list" class="examples-list"></div>
+        </div>
       </div>
       <!-- Zone 2: Packet View -->
       <div class="zone" id="packet-view" style="display:none;">
