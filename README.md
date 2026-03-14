@@ -2,6 +2,16 @@
 
 This is an ongoing Go implementation of [BIP-370 (PSBTv2)](https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki) + [BIP-174 (PSBTv0)](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki). It uses [btcd](https://github.com/btcsuite/btcd/tree/master/btcutil/psbt) as the base, given it has a lot of cool stuff already. 
 
+#### Is this LLM slop?
+
+No. I do get (who doesn't) a lot of AI assistance of course (guess what, I don't like `go`) but I also do spend quite a portion my time to make sure that:
+
+- it is not pure slop
+- it reflects psbt-v2 BIP + other implementations as much as it can
+- it does not go full non-sense against the logic btcd/psbt already had (though architecture-wise it may not be the greatest)
+
+Still feel free to send an issue if you see a problem of course. At the end of the day, this is open-source, and I'm a human who can make mistakes.
+
 ### Status
 
 | BIP-370 Role | Status |
