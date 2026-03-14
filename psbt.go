@@ -986,6 +986,13 @@ func (p *Packet) inputSequence(i int) uint32 {
 	return wire.MaxTxInSequenceNum
 }
 
+// InputSequence returns the sequence number for input i. For v0 it reads
+// from UnsignedTx; for v2 it reads the per-input Sequence field (defaulting
+// to MaxTxInSequenceNum if nil).
+func (p *Packet) InputSequence(i int) uint32 {
+	return p.inputSequence(i)
+}
+
 // Returns the amount for input i
 // For PSBTv2, returns InvalidPSBT if the amount is missing
 func (p *Packet) outputAmount(i int) (int64, error) {
@@ -1098,6 +1105,13 @@ func (p *Packet) buildUnsignedTx() (*wire.MsgTx, error) {
 	}
 
 	return tx, nil
+}
+
+// BuildUnsignedTx reconstructs the unsigned transaction from the packet.
+// For v0 this returns a copy of UnsignedTx; for v2 it assembles from
+// per-input/output fields using ComputedLockTime.
+func (p *Packet) BuildUnsignedTx() (*wire.MsgTx, error) {
+	return p.buildUnsignedTx()
 }
 
 // ComputedLockTime returns the transaction locktime.
