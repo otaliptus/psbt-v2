@@ -13,3 +13,7 @@ experimental/
 
 playground/psbt.wasm
 playground/wasm_exec.js
+
+# misc
+cover.out
+.superpowers/
