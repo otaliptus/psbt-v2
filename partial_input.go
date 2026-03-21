@@ -37,6 +37,10 @@ type PInput struct {
 	Sequence               *uint32         // 0x10: sequence number, optional, default 0xFFFFFFFF
 	RequiredTimeLocktime   *uint32         // 0x11: val >= 500_000_000
 	RequiredHeightLocktime *uint32         // 0x12: val < 500_000_000
+
+	// BIP-375 silent payment fields (v2 only).
+	SPECDHShares []SilentPaymentECDHShare // 0x1d: keyed by scan key
+	SPDLEQProofs []SilentPaymentDLEQProof // 0x1e: keyed by scan key
 }
 
 // NewPsbtInput creates an instance of PsbtInput given either a nonWitnessUtxo
@@ -491,6 +495,47 @@ func (pi *PInput) deserialize(r io.Reader) error {
 			}
 			pi.RequiredHeightLocktime = &h
 
+		case SPECDHShareInputType:
+			if len(keyData) != 33 || !validatePubkey(keyData) {
+				return ErrInvalidKeyData
+			}
+			if len(value) != 33 {
+				return ErrInvalidPsbtFormat
+			}
+			if !validatePubkey(value) {
+				return ErrInvalidKeyData
+			}
+
+			for _, existing := range pi.SPECDHShares {
+				if bytes.Equal(existing.ScanKey, keyData) {
+					return ErrDuplicateKey
+				}
+			}
+
+			pi.SPECDHShares = append(pi.SPECDHShares, SilentPaymentECDHShare{
+				ScanKey: append([]byte(nil), keyData...),
+				Share:   append([]byte(nil), value...),
+			})
+
+		case SPDLEQInputType:
+			if len(keyData) != 33 || !validatePubkey(keyData) {
+				return ErrInvalidKeyData
+			}
+			if len(value) != 64 {
+				return ErrInvalidPsbtFormat
+			}
+
+			for _, existing := range pi.SPDLEQProofs {
+				if bytes.Equal(existing.ScanKey, keyData) {
+					return ErrDuplicateKey
+				}
+			}
+
+			pi.SPDLEQProofs = append(pi.SPDLEQProofs, SilentPaymentDLEQProof{
+				ScanKey: append([]byte(nil), keyData...),
+				Proof:   append([]byte(nil), value...),
+			})
+
 		default:
 			// A fall through case for any proprietary types.
 			keyCodeAndData := append(
@@ -770,6 +815,30 @@ func (pi *PInput) serialize(w io.Writer) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+
+	// BIP-375 per-input fields (0x1d-0x1e).
+	// Serialized unconditionally (outside the finalization guard) because
+	// the Transaction Extractor needs ECDH shares and DLEQ proofs to
+	// verify silent payment output scripts after finalization.
+	for _, share := range pi.SPECDHShares {
+		err := serializeKVPairWithType(
+			w, uint8(SPECDHShareInputType), share.ScanKey,
+			share.Share,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, proof := range pi.SPDLEQProofs {
+		err := serializeKVPairWithType(
+			w, uint8(SPDLEQInputType), proof.ScanKey,
+			proof.Proof,
+		)
+		if err != nil {
+			return err
 		}
 	}
 

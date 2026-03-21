@@ -24,6 +24,7 @@ import (
 // The conversion does not invent v2-only semantics that never existed in the
 // v0 packet:
 //   - TxModifiable is left nil.
+//   - BIP-375 global ECDH shares / DLEQ proofs are left nil.
 //   - RequiredTimeLocktime / RequiredHeightLocktime are left nil.
 //
 // The returned packet is a deep copy: mutating it will not mutate the source
@@ -120,6 +121,7 @@ func ConvertToV2(p *Packet) (*Packet, error) {
 //   - RequiredTimeLocktime / RequiredHeightLocktime.
 //   - PreviousTxID / OutputIndex / Sequence as standalone input fields.
 //   - Amount / Script as standalone output fields.
+//   - BIP-375 global/input/output fields.
 //
 // If the v2 packet cannot be materialized into a valid unsigned transaction
 // (for example because locktime requirements are incompatible), conversion
@@ -162,6 +164,8 @@ func ConvertToV0(p *Packet) (*Packet, error) {
 		in.Sequence = nil
 		in.RequiredTimeLocktime = nil
 		in.RequiredHeightLocktime = nil
+		in.SPECDHShares = nil
+		in.SPDLEQProofs = nil
 
 		result.Inputs[i] = in
 	}
@@ -170,6 +174,8 @@ func ConvertToV0(p *Packet) (*Packet, error) {
 		out := clonePOutput(p.Outputs[i])
 		out.Amount = nil
 		out.Script = nil
+		out.SPV0Info = nil
+		out.SPV0Label = nil
 
 		result.Outputs[i] = out
 	}
@@ -367,6 +373,49 @@ func cloneInt64Ptr(src *int64) *int64 {
 	return &v
 }
 
+func cloneSPECDHShares(src []SilentPaymentECDHShare) []SilentPaymentECDHShare {
+	if src == nil {
+		return nil
+	}
+
+	dst := make([]SilentPaymentECDHShare, len(src))
+	for i, item := range src {
+		dst[i] = SilentPaymentECDHShare{
+			ScanKey: cloneBytes(item.ScanKey),
+			Share:   cloneBytes(item.Share),
+		}
+	}
+
+	return dst
+}
+
+func cloneSPDLEQProofs(src []SilentPaymentDLEQProof) []SilentPaymentDLEQProof {
+	if src == nil {
+		return nil
+	}
+
+	dst := make([]SilentPaymentDLEQProof, len(src))
+	for i, item := range src {
+		dst[i] = SilentPaymentDLEQProof{
+			ScanKey: cloneBytes(item.ScanKey),
+			Proof:   cloneBytes(item.Proof),
+		}
+	}
+
+	return dst
+}
+
+func cloneSPV0Info(src *SilentPaymentV0Info) *SilentPaymentV0Info {
+	if src == nil {
+		return nil
+	}
+
+	return &SilentPaymentV0Info{
+		ScanKey:  cloneBytes(src.ScanKey),
+		SpendKey: cloneBytes(src.SpendKey),
+	}
+}
+
 func cloneTxOut(src *wire.TxOut) *wire.TxOut {
 	if src == nil {
 		return nil
@@ -404,6 +453,8 @@ func clonePInput(src PInput) PInput {
 	dst.Sequence = cloneUint32Ptr(src.Sequence)
 	dst.RequiredTimeLocktime = cloneUint32Ptr(src.RequiredTimeLocktime)
 	dst.RequiredHeightLocktime = cloneUint32Ptr(src.RequiredHeightLocktime)
+	dst.SPECDHShares = cloneSPECDHShares(src.SPECDHShares)
+	dst.SPDLEQProofs = cloneSPDLEQProofs(src.SPDLEQProofs)
 
 	return dst
 }
@@ -421,6 +472,8 @@ func clonePOutput(src POutput) POutput {
 	dst.Unknowns = cloneUnknowns(src.Unknowns)
 	dst.Amount = cloneInt64Ptr(src.Amount)
 	dst.Script = cloneBytes(src.Script)
+	dst.SPV0Info = cloneSPV0Info(src.SPV0Info)
+	dst.SPV0Label = cloneUint32Ptr(src.SPV0Label)
 
 	return dst
 }

@@ -180,6 +180,10 @@ type Packet struct {
 	FallbackLocktime *uint32 // 0x03
 	TxModifiable     *uint8  // 0x06
 
+	// BIP-375 global fields (v2 only).
+	GlobalSPECDHShares []SilentPaymentECDHShare // 0x07: keyed by scan key
+	GlobalSPDLEQProofs []SilentPaymentDLEQProof // 0x08: keyed by scan key
+
 	// Inputs contains all the information needed to properly sign this
 	// target input within the above transaction.
 	Inputs []PInput
@@ -262,15 +266,17 @@ func decodeCompactSizeValue(value []byte) (int, error) {
 // that determine how many maps the rest of NewFromRawBytes should read.
 func parseGlobalMap(r io.Reader) (*Packet, int, int, error) {
 	var (
-		unsignedTx       *wire.MsgTx
-		version          *uint32
-		txVersion        *int32
-		fallbackLocktime *uint32
-		inputCount       *int
-		outputCount      *int
-		txModifiable     *uint8
-		xPubSlice        []XPub
-		unknownSlice     []*Unknown
+		unsignedTx         *wire.MsgTx
+		version            *uint32
+		txVersion          *int32
+		fallbackLocktime   *uint32
+		inputCount         *int
+		outputCount        *int
+		txModifiable       *uint8
+		globalSPECDHShares []SilentPaymentECDHShare
+		globalSPDLEQProofs []SilentPaymentDLEQProof
+		xPubSlice          []XPub
+		unknownSlice       []*Unknown
 	)
 
 	for {
@@ -421,6 +427,51 @@ func parseGlobalMap(r io.Reader) (*Packet, int, int, error) {
 			v := value[0]
 			txModifiable = &v
 
+		case SPECDHShareGlobalType:
+			if len(keyData) != 33 || !validatePubkey(keyData) {
+				return nil, 0, 0, ErrInvalidKeyData
+			}
+			if len(value) != 33 {
+				return nil, 0, 0, ErrInvalidPsbtFormat
+			}
+			if !validatePubkey(value) {
+				return nil, 0, 0, ErrInvalidKeyData
+			}
+
+			for _, existing := range globalSPECDHShares {
+				if bytes.Equal(existing.ScanKey, keyData) {
+					return nil, 0, 0, ErrDuplicateKey
+				}
+			}
+
+			globalSPECDHShares = append(
+				globalSPECDHShares, SilentPaymentECDHShare{
+					ScanKey: append([]byte(nil), keyData...),
+					Share:   append([]byte(nil), value...),
+				},
+			)
+
+		case SPDLEQGlobalType:
+			if len(keyData) != 33 || !validatePubkey(keyData) {
+				return nil, 0, 0, ErrInvalidKeyData
+			}
+			if len(value) != 64 {
+				return nil, 0, 0, ErrInvalidPsbtFormat
+			}
+
+			for _, existing := range globalSPDLEQProofs {
+				if bytes.Equal(existing.ScanKey, keyData) {
+					return nil, 0, 0, ErrDuplicateKey
+				}
+			}
+
+			globalSPDLEQProofs = append(
+				globalSPDLEQProofs, SilentPaymentDLEQProof{
+					ScanKey: append([]byte(nil), keyData...),
+					Proof:   append([]byte(nil), value...),
+				},
+			)
+
 		case VersionType:
 			if keyData != nil {
 				err := appendUnknownKV(&unknownSlice, keyCode, keyData, value)
@@ -468,6 +519,9 @@ func parseGlobalMap(r io.Reader) (*Packet, int, int, error) {
 		if txVersion != nil || fallbackLocktime != nil || inputCount != nil || outputCount != nil || txModifiable != nil {
 			return nil, 0, 0, ErrInvalidPsbtFormat
 		}
+		if len(globalSPECDHShares) > 0 || len(globalSPDLEQProofs) > 0 {
+			return nil, 0, 0, ErrInvalidPsbtFormat
+		}
 		return &Packet{
 			Version:    0,
 			UnsignedTx: unsignedTx,
@@ -484,12 +538,14 @@ func parseGlobalMap(r io.Reader) (*Packet, int, int, error) {
 		}
 
 		return &Packet{
-			Version:          2,
-			TxVersion:        *txVersion,
-			FallbackLocktime: fallbackLocktime,
-			TxModifiable:     txModifiable,
-			XPubs:            xPubSlice,
-			Unknowns:         unknownSlice,
+			Version:            2,
+			TxVersion:          *txVersion,
+			FallbackLocktime:   fallbackLocktime,
+			TxModifiable:       txModifiable,
+			GlobalSPECDHShares: globalSPECDHShares,
+			GlobalSPDLEQProofs: globalSPDLEQProofs,
+			XPubs:              xPubSlice,
+			Unknowns:           unknownSlice,
 		}, *inputCount, *outputCount, nil
 	default:
 		return nil, 0, 0, ErrInvalidPsbtFormat
@@ -693,6 +749,25 @@ func (p *Packet) serializeV2(w io.Writer) error {
 		}
 	}
 
+	for _, share := range p.GlobalSPECDHShares {
+		err := serializeKVPairWithType(
+			w, uint8(SPECDHShareGlobalType), share.ScanKey,
+			share.Share,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	for _, proof := range p.GlobalSPDLEQProofs {
+		err := serializeKVPairWithType(
+			w, uint8(SPDLEQGlobalType), proof.ScanKey,
+			proof.Proof,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := serializeGlobalUint32(w, VersionType, 2); err != nil {
 		return err
 	}
@@ -842,6 +917,9 @@ func (p *Packet) SanityCheck() error {
 
 			return ErrInvalidPsbtFormat
 		}
+		if len(p.GlobalSPECDHShares) > 0 || len(p.GlobalSPDLEQProofs) > 0 {
+			return ErrInvalidPsbtFormat
+		}
 
 		for _, in := range p.Inputs {
 			if in.PreviousTxID != nil || in.OutputIndex != nil ||
@@ -850,10 +928,16 @@ func (p *Packet) SanityCheck() error {
 
 				return ErrInvalidPsbtFormat
 			}
+			if len(in.SPECDHShares) > 0 || len(in.SPDLEQProofs) > 0 {
+				return ErrInvalidPsbtFormat
+			}
 		}
 
 		for _, out := range p.Outputs {
 			if out.Amount != nil || out.Script != nil {
+				return ErrInvalidPsbtFormat
+			}
+			if out.SPV0Info != nil || out.SPV0Label != nil {
 				return ErrInvalidPsbtFormat
 			}
 		}
@@ -884,7 +968,16 @@ func (p *Packet) SanityCheck() error {
 		}
 
 		for _, out := range p.Outputs {
-			if out.Amount == nil || out.Script == nil {
+			if out.Amount == nil {
+				return ErrInvalidPsbtFormat
+			}
+			// BIP-375: Script is optional when SPV0Info is present.
+			// len() handles both nil and empty-but-non-nil slices.
+			hasScript := len(out.Script) > 0
+			if !hasScript && out.SPV0Info == nil {
+				return ErrInvalidPsbtFormat
+			}
+			if out.SPV0Label != nil && out.SPV0Info == nil {
 				return ErrInvalidPsbtFormat
 			}
 		}
@@ -1001,8 +1094,8 @@ func (p *Packet) outputAmount(i int) (int64, error) {
 	return *p.Outputs[i].Amount, nil
 }
 
-// Returns the pkScript for output i
-// For PSBTv2, returns InvalidPSBT if the Script is missing
+// Returns the pkScript for output i.
+// For PSBTv2, returns InvalidPSBT if the Script is missing or empty.
 func (p *Packet) outputScript(i int) ([]byte, error) {
 	if p.Version == 0 {
 		if p.UnsignedTx == nil || i >= len(p.UnsignedTx.TxOut) {
@@ -1010,7 +1103,7 @@ func (p *Packet) outputScript(i int) ([]byte, error) {
 		}
 		return p.UnsignedTx.TxOut[i].PkScript, nil
 	}
-	if p.Outputs[i].Script == nil {
+	if len(p.Outputs[i].Script) == 0 {
 		return nil, ErrInvalidPsbtFormat
 	}
 	return p.Outputs[i].Script, nil

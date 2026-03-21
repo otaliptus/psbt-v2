@@ -33,7 +33,7 @@ const (
 	// The following section includes global type changes stated in the BIP-174/370 spec
 	// https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#specification
 	// https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#specification
-	// Question/TODO: BIP-375 Types? ECDHShare & DLEQ?
+	// BIP-375 types are defined after the BIP-370 global types below.
 	// ================================================
 	// ============= BIP-370 GLOBAL TYPES =============
 	// ================================================
@@ -82,6 +82,30 @@ const (
 	//
 	// This type is **optional**.
 	TxModifiableType GlobalType = 0x06
+
+	// ================================================
+	// ============= BIP-375 GLOBAL TYPES =============
+	// ================================================
+
+	// SPECDHShareGlobalType carries an ECDH share for silent payments.
+	//
+	// The key ({0x07}|{33-byte scan key}) identifies the recipient.
+	// The value is a 33-byte compressed public key: a_n * B_scan.
+	//
+	// **PSBTv2 only**; excluded from v0.
+	SPECDHShareGlobalType GlobalType = 0x07
+
+	// SPDLEQGlobalType carries a BIP-374 DLEQ proof for silent payments.
+	//
+	// The key ({0x08}|{33-byte scan key}) identifies the recipient.
+	// The value is a 64-byte proof (e || s).
+	//
+	// **PSBTv2 only**; excluded from v0.
+	SPDLEQGlobalType GlobalType = 0x08
+
+	// ================================================
+	// =========== BIP-375 GLOBAL TYPES END ===========
+	// ================================================
 
 	// ================================================
 	// =========== BIP-370 GLOBAL TYPES END ===========
@@ -172,7 +196,7 @@ const (
 	FinalScriptWitnessType InputType = 8
 
 	// The following section includes input type changes stated in the BIP-174/370 spec
-	// Question/TODO: BIP-375 Types? ECDHShare & DLEQ?
+	// BIP-375 types are defined after the BIP-371 taproot input types below.
 	// ================================================
 	// ============== BIP-370 INPUT TYPES =============
 	// ================================================
@@ -269,6 +293,30 @@ const (
 	// 32-byte hash denoting the root hash of a merkle tree of scripts.
 	TaprootMerkleRootType InputType = 0x18
 
+	// ================================================
+	// ============= BIP-375 INPUT TYPES ==============
+	// ================================================
+
+	// SPECDHShareInputType carries a per-input ECDH share.
+	//
+	// The key ({0x1d}|{33-byte scan key}) identifies the recipient.
+	// The value is a 33-byte compressed public key: a * B_scan.
+	//
+	// **PSBTv2 only**; excluded from v0.
+	SPECDHShareInputType InputType = 0x1d
+
+	// SPDLEQInputType carries a per-input BIP-374 DLEQ proof.
+	//
+	// The key ({0x1e}|{33-byte scan key}) identifies the recipient.
+	// The value is a 64-byte proof (e || s).
+	//
+	// **PSBTv2 only**; excluded from v0.
+	SPDLEQInputType InputType = 0x1e
+
+	// ================================================
+	// =========== BIP-375 INPUT TYPES END ============
+	// ================================================
+
 	// ProprietaryInputType is a custom type for use by devs.
 	//
 	// The key ({0xFC}|<prefix>|{subtype}|{key data}), is a Variable length
@@ -342,8 +390,55 @@ const (
 	// followed by said number of 32-byte leaf hashes. The rest of the value
 	// is then identical to the Bip32DerivationInputType value.
 	TaprootBip32DerivationOutputType OutputType = 7
+
+	// ================================================
+	// ============ BIP-375 OUTPUT TYPES ==============
+	// ================================================
+
+	// SPV0InfoOutputType carries silent payment v0 recipient info.
+	//
+	// The key ({0x09}) has no additional key data.
+	// The value is 66 bytes: 33-byte scan key || 33-byte spend key.
+	//
+	// When present, PSBT_OUT_SCRIPT becomes optional for this output.
+	// **PSBTv2 only**; excluded from v0.
+	SPV0InfoOutputType OutputType = 0x09
+
+	// SPV0LabelOutputType carries a silent payment v0 label.
+	//
+	// The key ({0x0a}) has no additional key data.
+	// The value is a 32-bit little-endian unsigned integer.
+	//
+	// Must not be present without PSBT_OUT_SP_V0_INFO.
+	// **PSBTv2 only**; excluded from v0.
+	SPV0LabelOutputType OutputType = 0x0a
+
+	// ================================================
+	// ========== BIP-375 OUTPUT TYPES END ============
+	// ================================================
 )
 
 // Separator for height-based locktimes and time-based locktimes.
 // val < 500_000_000 --> block height; otherwise Unix Timestamp.
 const LocktimeThreshold = 500_000_000
+
+// SilentPaymentECDHShare represents a BIP-375 ECDH share keyed by a
+// compressed 33-byte scan key.
+type SilentPaymentECDHShare struct {
+	ScanKey []byte // 33-byte compressed pubkey
+	Share   []byte // 33-byte compressed pubkey (a * B_scan)
+}
+
+// SilentPaymentDLEQProof represents a BIP-374 proof keyed by a compressed
+// 33-byte scan key.
+type SilentPaymentDLEQProof struct {
+	ScanKey []byte // 33-byte compressed pubkey
+	Proof   []byte // 64-byte proof (e || s)
+}
+
+// SilentPaymentV0Info represents the scan/spend key pair carried by
+// PSBT_OUT_SP_V0_INFO.
+type SilentPaymentV0Info struct {
+	ScanKey  []byte // 33-byte compressed pubkey
+	SpendKey []byte // 33-byte compressed pubkey
+}

@@ -23,6 +23,10 @@ type POutput struct {
 	// PSBTv2 fields
 	Amount *int64 // 0x03: amount in sats, required in v2
 	Script []byte // 0x04: scriptPubKey, required in v2
+
+	// BIP-375 silent payment fields (v2 only).
+	SPV0Info  *SilentPaymentV0Info // 0x09: scan key + spend key
+	SPV0Label *uint32              // 0x0a: 32-bit LE label
 }
 
 // NewPsbtOutput creates an instance of PsbtOutput; the three parameters
@@ -199,6 +203,51 @@ func (po *POutput) deserialize(r io.Reader) error {
 			// var-len, no size check
 			po.Script = value
 
+		case SPV0InfoOutputType:
+			if keyData != nil {
+				err := appendUnknownKV(
+					&po.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+			if po.SPV0Info != nil {
+				return ErrDuplicateKey
+			}
+			if len(value) != 66 {
+				return ErrInvalidPsbtFormat
+			}
+			if !validatePubkey(value[:33]) || !validatePubkey(value[33:66]) {
+				return ErrInvalidKeyData
+			}
+
+			po.SPV0Info = &SilentPaymentV0Info{
+				ScanKey:  append([]byte(nil), value[:33]...),
+				SpendKey: append([]byte(nil), value[33:]...),
+			}
+
+		case SPV0LabelOutputType:
+			if keyData != nil {
+				err := appendUnknownKV(
+					&po.Unknowns, keyCode, keyData, value,
+				)
+				if err != nil {
+					return err
+				}
+				break
+			}
+			if po.SPV0Label != nil {
+				return ErrDuplicateKey
+			}
+			if len(value) != 4 {
+				return ErrInvalidPsbtFormat
+			}
+
+			label := binary.LittleEndian.Uint32(value)
+			po.SPV0Label = &label
+
 		default:
 			// A fall through case for any proprietary types.
 			keyCodeAndData := append(
@@ -314,6 +363,31 @@ func (po *POutput) serialize(w io.Writer) error {
 		err = serializeKVPairWithType(
 			w, uint8(TaprootBip32DerivationOutputType),
 			derivation.XOnlyPubKey, value,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// BIP-375 per-output fields (0x09-0x0a).
+	if po.SPV0Info != nil {
+		value := make([]byte, 66)
+		copy(value[:33], po.SPV0Info.ScanKey)
+		copy(value[33:], po.SPV0Info.SpendKey)
+
+		err := serializeKVPairWithType(
+			w, uint8(SPV0InfoOutputType), nil, value,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if po.SPV0Label != nil {
+		var buf [4]byte
+		binary.LittleEndian.PutUint32(buf[:], *po.SPV0Label)
+
+		err := serializeKVPairWithType(
+			w, uint8(SPV0LabelOutputType), nil, buf[:],
 		)
 		if err != nil {
 			return err
