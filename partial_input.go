@@ -822,6 +822,11 @@ func (pi *PInput) serialize(w io.Writer) error {
 	// Serialized unconditionally (outside the finalization guard) because
 	// the Transaction Extractor needs ECDH shares and DLEQ proofs to
 	// verify silent payment output scripts after finalization.
+	sort.Slice(pi.SPECDHShares, func(i, j int) bool {
+		return bytes.Compare(
+			pi.SPECDHShares[i].ScanKey, pi.SPECDHShares[j].ScanKey,
+		) < 0
+	})
 	for _, share := range pi.SPECDHShares {
 		err := serializeKVPairWithType(
 			w, uint8(SPECDHShareInputType), share.ScanKey,
@@ -832,6 +837,11 @@ func (pi *PInput) serialize(w io.Writer) error {
 		}
 	}
 
+	sort.Slice(pi.SPDLEQProofs, func(i, j int) bool {
+		return bytes.Compare(
+			pi.SPDLEQProofs[i].ScanKey, pi.SPDLEQProofs[j].ScanKey,
+		) < 0
+	})
 	for _, proof := range pi.SPDLEQProofs {
 		err := serializeKVPairWithType(
 			w, uint8(SPDLEQInputType), proof.ScanKey,

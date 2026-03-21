@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"sort"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
@@ -749,6 +750,12 @@ func (p *Packet) serializeV2(w io.Writer) error {
 		}
 	}
 
+	sort.Slice(p.GlobalSPECDHShares, func(i, j int) bool {
+		return bytes.Compare(
+			p.GlobalSPECDHShares[i].ScanKey,
+			p.GlobalSPECDHShares[j].ScanKey,
+		) < 0
+	})
 	for _, share := range p.GlobalSPECDHShares {
 		err := serializeKVPairWithType(
 			w, uint8(SPECDHShareGlobalType), share.ScanKey,
@@ -758,6 +765,12 @@ func (p *Packet) serializeV2(w io.Writer) error {
 			return err
 		}
 	}
+	sort.Slice(p.GlobalSPDLEQProofs, func(i, j int) bool {
+		return bytes.Compare(
+			p.GlobalSPDLEQProofs[i].ScanKey,
+			p.GlobalSPDLEQProofs[j].ScanKey,
+		) < 0
+	})
 	for _, proof := range p.GlobalSPDLEQProofs {
 		err := serializeKVPairWithType(
 			w, uint8(SPDLEQGlobalType), proof.ScanKey,
