@@ -36,6 +36,26 @@ func NewUpdater(p *Packet) (*Updater, error) {
 
 }
 
+func (u *Updater) checkSilentPaymentSegwitVersionConflict(inIndex int,
+	candidate PInput) error {
+
+	if !u.Upsbt.hasSilentPaymentOutputs() {
+		return nil
+	}
+
+	spendsSegwitV1Plus, err := u.Upsbt.inputSpendsSegwitVersionGreaterThanOneWith(
+		inIndex, candidate,
+	)
+	if err != nil {
+		return err
+	}
+	if spendsSegwitV1Plus {
+		return ErrSilentPaymentSegwitVersion
+	}
+
+	return nil
+}
+
 // AddInNonWitnessUtxo adds the utxo information for an input which is
 // non-witness. This requires provision of a full transaction (which is the
 // source of the corresponding prevOut), and the input index. If addition of
@@ -43,6 +63,14 @@ func NewUpdater(p *Packet) (*Updater, error) {
 func (u *Updater) AddInNonWitnessUtxo(tx *wire.MsgTx, inIndex int) error {
 	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
 		return ErrInputIndexOutOfBounds
+	}
+
+	candidate := u.Upsbt.Inputs[inIndex]
+	candidate.NonWitnessUtxo = tx
+	if err := u.checkSilentPaymentSegwitVersionConflict(
+		inIndex, candidate,
+	); err != nil {
+		return err
 	}
 
 	u.Upsbt.Inputs[inIndex].NonWitnessUtxo = tx
@@ -62,6 +90,14 @@ func (u *Updater) AddInNonWitnessUtxo(tx *wire.MsgTx, inIndex int) error {
 func (u *Updater) AddInWitnessUtxo(txout *wire.TxOut, inIndex int) error {
 	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
 		return ErrInputIndexOutOfBounds
+	}
+
+	candidate := u.Upsbt.Inputs[inIndex]
+	candidate.WitnessUtxo = txout
+	if err := u.checkSilentPaymentSegwitVersionConflict(
+		inIndex, candidate,
+	); err != nil {
+		return err
 	}
 
 	u.Upsbt.Inputs[inIndex].WitnessUtxo = txout
@@ -270,6 +306,14 @@ func (u *Updater) AddInRedeemScript(redeemScript []byte,
 
 	if inIndex < 0 || inIndex >= len(u.Upsbt.Inputs) {
 		return ErrInputIndexOutOfBounds
+	}
+
+	candidate := u.Upsbt.Inputs[inIndex]
+	candidate.RedeemScript = redeemScript
+	if err := u.checkSilentPaymentSegwitVersionConflict(
+		inIndex, candidate,
+	); err != nil {
+		return err
 	}
 
 	u.Upsbt.Inputs[inIndex].RedeemScript = redeemScript

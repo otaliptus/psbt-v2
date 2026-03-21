@@ -16,6 +16,7 @@ import (
 	"sort"
 
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
 
@@ -149,6 +150,12 @@ var (
 	// ErrOutputIndexOutOfBounds indicates that the caller supplied an
 	// output index that is negative or >= the number of outputs.
 	ErrOutputIndexOutOfBounds = errors.New("output index out of bounds")
+
+	// ErrSilentPaymentSegwitVersion indicates that silent payment outputs
+	// cannot coexist with inputs spending SegWit version > 1 outputs.
+	ErrSilentPaymentSegwitVersion = errors.New(
+		"silent payment outputs cannot coexist with inputs spending segwit version > 1 outputs",
+	)
 )
 
 // Unknown is a struct encapsulating a key-value pair for which the key type is
@@ -1122,6 +1129,107 @@ func (p *Packet) outputScript(i int) ([]byte, error) {
 	return p.Outputs[i].Script, nil
 }
 
+func (p *Packet) hasSilentPaymentOutputs() bool {
+	for _, out := range p.Outputs {
+		if out.SPV0Info != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasSegwitVersionGreaterThanOneScript(script []byte) (bool, error) {
+	if !txscript.IsWitnessProgram(script) {
+		return false, nil
+	}
+
+	version, _, err := txscript.ExtractWitnessProgramInfo(script)
+	if err != nil {
+		return false, err
+	}
+
+	return version > 1, nil
+}
+
+func (p *Packet) inputSpendsSegwitVersionGreaterThanOneWith(i int,
+	in PInput) (bool, error) {
+
+	if len(in.RedeemScript) != 0 {
+		spendsSegwitV1Plus, err := hasSegwitVersionGreaterThanOneScript(
+			in.RedeemScript,
+		)
+		if err != nil {
+			return false, err
+		}
+		if spendsSegwitV1Plus {
+			return true, nil
+		}
+	}
+
+	switch {
+	case in.WitnessUtxo != nil:
+		return hasSegwitVersionGreaterThanOneScript(
+			in.WitnessUtxo.PkScript,
+		)
+
+	case in.NonWitnessUtxo != nil:
+		prevOut, err := p.inputPrevOutpoint(i)
+		if err != nil {
+			return false, err
+		}
+		if prevOut.Index >= uint32(len(in.NonWitnessUtxo.TxOut)) {
+			return false, ErrInvalidPsbtFormat
+		}
+
+		return hasSegwitVersionGreaterThanOneScript(
+			in.NonWitnessUtxo.TxOut[prevOut.Index].PkScript,
+		)
+
+	default:
+		return false, nil
+	}
+}
+
+func (p *Packet) hasSegwitVersionGreaterThanOneInputs() (bool, error) {
+	for i, in := range p.Inputs {
+		spendsSegwitV1Plus, err := p.inputSpendsSegwitVersionGreaterThanOneWith(
+			i, in,
+		)
+		if err != nil {
+			return false, err
+		}
+		if spendsSegwitV1Plus {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func silentPaymentUniqueIDScript(info *SilentPaymentV0Info) ([]byte, error) {
+	if info == nil || len(info.ScanKey) != 33 || len(info.SpendKey) != 33 {
+		return nil, ErrInvalidPsbtFormat
+	}
+	if !validatePubkey(info.ScanKey) || !validatePubkey(info.SpendKey) {
+		return nil, ErrInvalidKeyData
+	}
+
+	script := make([]byte, 67)
+	copy(script[1:34], info.ScanKey)
+	copy(script[34:], info.SpendKey)
+
+	return script, nil
+}
+
+func (p *Packet) uniqueIDOutputScript(i int) ([]byte, error) {
+	if p.Version == 2 && p.Outputs[i].SPV0Info != nil {
+		return silentPaymentUniqueIDScript(p.Outputs[i].SPV0Info)
+	}
+
+	return p.outputScript(i)
+}
+
 // Returns the input value for input i.
 // For PSBTv2, the prevout is resolved from per-input fields.
 func (p *Packet) inputUtxoValue(i int) (int64, error) {
@@ -1155,7 +1263,8 @@ func (p *Packet) inputUtxoValue(i int) (int64, error) {
 // The returned MsgTx is a fresh copy — callers may mutate it freely.
 // This is the shared foundation for the extractor, v2→v0 conversion,
 // and signer/finalizer paths that need a concrete transaction.
-func (p *Packet) buildUnsignedTx() (*wire.MsgTx, error) {
+func (p *Packet) buildUnsignedTxWithOutputScript(outputScript func(int) ([]byte,
+	error)) (*wire.MsgTx, error) {
 	if p.Version == 0 {
 		if p.UnsignedTx == nil {
 			return nil, ErrInvalidPsbtFormat
@@ -1190,7 +1299,7 @@ func (p *Packet) buildUnsignedTx() (*wire.MsgTx, error) {
 			return nil, err
 		}
 
-		script, err := p.outputScript(i)
+		script, err := outputScript(i)
 		if err != nil {
 			return nil, err
 		}
@@ -1204,6 +1313,28 @@ func (p *Packet) buildUnsignedTx() (*wire.MsgTx, error) {
 	}
 
 	return tx, nil
+}
+
+func (p *Packet) buildUnsignedTx() (*wire.MsgTx, error) {
+	return p.buildUnsignedTxWithOutputScript(p.outputScript)
+}
+
+// UniqueIDPreimage returns the raw unsigned-transaction serialization used for
+// uniquely identifying a PSBT. Callers apply their own hashing policy to these
+// bytes. For silent payment outputs, BIP-375 requires using
+// 0x00||scan_key||spend_key instead of PSBT_OUT_SCRIPT to avoid malleability.
+func (p *Packet) UniqueIDPreimage() ([]byte, error) {
+	tx, err := p.buildUnsignedTxWithOutputScript(p.uniqueIDOutputScript)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	if err := tx.SerializeNoWitness(&buf); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
 
 // ComputedLockTime returns the transaction locktime.

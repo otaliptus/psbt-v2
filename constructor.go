@@ -31,6 +31,16 @@ func NewConstructor(p *Packet) (*Constructor, error) {
 		return nil, err
 	}
 
+	if p.hasSilentPaymentOutputs() {
+		hasSegwitV1PlusInputs, err := p.hasSegwitVersionGreaterThanOneInputs()
+		if err != nil {
+			return nil, err
+		}
+		if hasSegwitV1PlusInputs {
+			return nil, ErrSilentPaymentSegwitVersion
+		}
+	}
+
 	return &Constructor{Pkt: p}, nil
 }
 
@@ -77,6 +87,60 @@ func (c *Constructor) AddOutput(amount int64, script []byte) error {
 	c.Pkt.Outputs = append(c.Pkt.Outputs, POutput{
 		Amount: &a,
 		Script: s,
+	})
+
+	return nil
+}
+
+// AddSilentPaymentOutput appends a silent payment output with unresolved
+// PSBT_OUT_SCRIPT. The packet remains structurally valid, but output script
+// materialization is deferred to the signer/extractor workflow.
+func (c *Constructor) AddSilentPaymentOutput(amount int64, scanKey,
+	spendKey []byte, label *uint32) error {
+
+	if !c.outputsModifiable() {
+		return ErrOutputsNotModifiable
+	}
+
+	if err := c.checkMutable(); err != nil {
+		return err
+	}
+
+	if amount < 0 {
+		return ErrInvalidPsbtFormat
+	}
+
+	if len(scanKey) != 33 || !validatePubkey(scanKey) {
+		return ErrInvalidKeyData
+	}
+	if len(spendKey) != 33 || !validatePubkey(spendKey) {
+		return ErrInvalidKeyData
+	}
+
+	hasSegwitV1PlusInputs, err := c.Pkt.hasSegwitVersionGreaterThanOneInputs()
+	if err != nil {
+		return err
+	}
+	if hasSegwitV1PlusInputs {
+		return ErrSilentPaymentSegwitVersion
+	}
+
+	a := amount
+	info := &SilentPaymentV0Info{
+		ScanKey:  append([]byte(nil), scanKey...),
+		SpendKey: append([]byte(nil), spendKey...),
+	}
+
+	var copiedLabel *uint32
+	if label != nil {
+		l := *label
+		copiedLabel = &l
+	}
+
+	c.Pkt.Outputs = append(c.Pkt.Outputs, POutput{
+		Amount:    &a,
+		SPV0Info:  info,
+		SPV0Label: copiedLabel,
 	})
 
 	return nil

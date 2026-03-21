@@ -1247,6 +1247,75 @@ func TestBuildUnsignedTxV2(t *testing.T) {
 	})
 }
 
+// TestUniqueIDPreimage verifies BIP-375 unique-identification serialization
+// substitutes SP_V0_INFO for the output script.
+func TestUniqueIDPreimage(t *testing.T) {
+	t.Run("v2_uses_sp_info_even_when_script_is_present", func(t *testing.T) {
+		amount := int64(5000)
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{{
+				PreviousTxID: hashPtr(0xaa),
+				OutputIndex:  u32Ptr(0),
+			}},
+			Outputs: []POutput{{
+				Amount: &amount,
+				Script: []byte{0x51},
+				SPV0Info: &SilentPaymentV0Info{
+					ScanKey:  append([]byte(nil), testPub2...),
+					SpendKey: append([]byte(nil), testPub1...),
+				},
+			}},
+		}
+
+		preimage, err := packet.UniqueIDPreimage()
+		require.NoError(t, err)
+
+		var tx wire.MsgTx
+		require.NoError(t, tx.DeserializeNoWitness(bytes.NewReader(preimage)))
+		require.Len(t, tx.TxOut, 1)
+
+		expectedScript, err := silentPaymentUniqueIDScript(
+			packet.Outputs[0].SPV0Info,
+		)
+		require.NoError(t, err)
+		require.Equal(t, expectedScript, tx.TxOut[0].PkScript)
+		require.NotEqual(t, packet.Outputs[0].Script, tx.TxOut[0].PkScript)
+	})
+
+	t.Run("v2_allows_missing_script_for_unique_id", func(t *testing.T) {
+		amount := int64(2500)
+		packet := &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{{
+				PreviousTxID: hashPtr(0xbb),
+				OutputIndex:  u32Ptr(1),
+			}},
+			Outputs: []POutput{{
+				Amount: &amount,
+				SPV0Info: &SilentPaymentV0Info{
+					ScanKey:  append([]byte(nil), testPub2...),
+					SpendKey: append([]byte(nil), testPub1...),
+				},
+			}},
+		}
+
+		require.NoError(t, packet.SanityCheck())
+		_, err := packet.buildUnsignedTx()
+		require.ErrorIs(t, err, ErrInvalidPsbtFormat)
+
+		preimage, err := packet.UniqueIDPreimage()
+		require.NoError(t, err)
+
+		var tx wire.MsgTx
+		require.NoError(t, tx.DeserializeNoWitness(bytes.NewReader(preimage)))
+		require.Len(t, tx.TxOut, 1)
+		require.EqualValues(t, amount, tx.TxOut[0].Value)
+	})
+}
+
 // //////////////////////////////////////////////////////////////////////////
 // PSBTv2 - Creator & Constructor tests
 // //////////////////////////////////////////////////////////////////////////
@@ -1550,6 +1619,168 @@ func TestConstructorAddOutputDoesNotAlias(t *testing.T) {
 	require.EqualValues(t, 0xaa, pkt.Outputs[1].Script[0])
 }
 
+// TestConstructorAddSilentPaymentOutput verifies the constructor can add a
+// BIP-375 output without aliasing caller-owned data.
+func TestConstructorAddSilentPaymentOutput(t *testing.T) {
+	t.Run("with_label", func(t *testing.T) {
+		mod := uint8(0x02)
+		pkt, err := NewV2(
+			2,
+			[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+			[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+			nil, &mod,
+		)
+		require.NoError(t, err)
+
+		c, err := NewConstructor(pkt)
+		require.NoError(t, err)
+
+		scanKey := append([]byte(nil), testPub2...)
+		spendKey := append([]byte(nil), testPub1...)
+		label := uint32(7)
+
+		require.NoError(t, c.AddSilentPaymentOutput(
+			500, scanKey, spendKey, &label,
+		))
+		require.Len(t, pkt.Outputs, 2)
+
+		out := pkt.Outputs[1]
+		require.EqualValues(t, 500, *out.Amount)
+		require.Nil(t, out.Script)
+		require.NotNil(t, out.SPV0Info)
+		require.Equal(t, testPub2, out.SPV0Info.ScanKey)
+		require.Equal(t, testPub1, out.SPV0Info.SpendKey)
+		require.NotNil(t, out.SPV0Label)
+		require.EqualValues(t, 7, *out.SPV0Label)
+		require.NoError(t, pkt.SanityCheck())
+
+		scanKey[0] ^= 0xff
+		spendKey[0] ^= 0xff
+		label = 99
+
+		require.Equal(t, testPub2, out.SPV0Info.ScanKey)
+		require.Equal(t, testPub1, out.SPV0Info.SpendKey)
+		require.EqualValues(t, 7, *out.SPV0Label)
+	})
+
+	t.Run("without_label", func(t *testing.T) {
+		mod := uint8(0x02)
+		pkt, err := NewV2(
+			2,
+			[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+			[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+			nil, &mod,
+		)
+		require.NoError(t, err)
+
+		c, err := NewConstructor(pkt)
+		require.NoError(t, err)
+
+		require.NoError(t, c.AddSilentPaymentOutput(
+			500, testPub2, testPub1, nil,
+		))
+		require.Len(t, pkt.Outputs, 2)
+		require.Nil(t, pkt.Outputs[1].SPV0Label)
+		require.NoError(t, pkt.SanityCheck())
+	})
+}
+
+// TestConstructorAddSilentPaymentOutputRejectsBadKeys verifies malformed
+// scan/spend keys are rejected before mutating the packet.
+func TestConstructorAddSilentPaymentOutputRejectsBadKeys(t *testing.T) {
+	mod := uint8(0x02)
+	pkt, err := NewV2(
+		2,
+		[]wire.OutPoint{{Hash: *hashPtr(0x11), Index: 0}},
+		[]*wire.TxOut{{Value: 1, PkScript: []byte{0x51}}},
+		nil, &mod,
+	)
+	require.NoError(t, err)
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+
+	require.ErrorIs(t, c.AddSilentPaymentOutput(
+		1, []byte{0x02, 0x01}, testPub1, nil,
+	), ErrInvalidKeyData)
+	require.ErrorIs(t, c.AddSilentPaymentOutput(
+		1, testPub2, []byte{0x02, 0x01}, nil,
+	), ErrInvalidKeyData)
+	require.Len(t, pkt.Outputs, 1)
+}
+
+// TestConstructorAddSilentPaymentOutputRejectsSegwitV1PlusInputs verifies the
+// BIP-375 constructor rule for known witness-v>1 inputs.
+func TestConstructorAddSilentPaymentOutputRejectsSegwitV1PlusInputs(t *testing.T) {
+	mod := uint8(0x02)
+	witnessV2Script, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_2).
+		AddData(bytes.Repeat([]byte{0x01}, 32)).
+		Script()
+	require.NoError(t, err)
+
+	pkt := &Packet{
+		Version:      2,
+		TxVersion:    2,
+		TxModifiable: &mod,
+		Inputs: []PInput{{
+			PreviousTxID: hashPtr(0x11),
+			OutputIndex:  u32Ptr(0),
+			WitnessUtxo: &wire.TxOut{
+				Value:    1000,
+				PkScript: witnessV2Script,
+			},
+		}},
+		Outputs: []POutput{{
+			Amount: func() *int64 { a := int64(1); return &a }(),
+			Script: []byte{0x51},
+		}},
+	}
+
+	c, err := NewConstructor(pkt)
+	require.NoError(t, err)
+	require.ErrorIs(t, c.AddSilentPaymentOutput(
+		500, testPub2, testPub1, nil,
+	), ErrSilentPaymentSegwitVersion)
+	require.Len(t, pkt.Outputs, 1)
+}
+
+// TestConstructorRejectsExistingSilentPaymentSegwitV1PlusConflict verifies the
+// constructor refuses known-invalid silent-payment packets.
+func TestConstructorRejectsExistingSilentPaymentSegwitV1PlusConflict(t *testing.T) {
+	mod := uint8(0x03)
+	witnessV2Script, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_2).
+		AddData(bytes.Repeat([]byte{0x01}, 32)).
+		Script()
+	require.NoError(t, err)
+
+	amount := int64(500)
+	pkt := &Packet{
+		Version:      2,
+		TxVersion:    2,
+		TxModifiable: &mod,
+		Inputs: []PInput{{
+			PreviousTxID: hashPtr(0x11),
+			OutputIndex:  u32Ptr(0),
+			WitnessUtxo: &wire.TxOut{
+				Value:    1000,
+				PkScript: witnessV2Script,
+			},
+		}},
+		Outputs: []POutput{{
+			Amount: &amount,
+			SPV0Info: &SilentPaymentV0Info{
+				ScanKey:  append([]byte(nil), testPub2...),
+				SpendKey: append([]byte(nil), testPub1...),
+			},
+		}},
+	}
+
+	_, err = NewConstructor(pkt)
+	require.ErrorIs(t, err, ErrSilentPaymentSegwitVersion)
+}
+
 // TestConstructorRejectsWhenSignaturesExist verifies that mutation is blocked
 // once any input contains signature material.
 func TestConstructorRejectsWhenSignaturesExist(t *testing.T) {
@@ -1763,6 +1994,87 @@ func TestConstructorRejectsNegativeAmount(t *testing.T) {
 	require.NoError(t, err)
 
 	require.ErrorIs(t, c.AddOutput(-1, []byte{0x51}), ErrInvalidPsbtFormat)
+}
+
+// TestUpdaterRejectsSegwitV1PlusInputsWhenSilentPaymentOutputsPresent verifies
+// the conflict is caught once updater methods reveal a segwit-v>1 spend.
+func TestUpdaterRejectsSegwitV1PlusInputsWhenSilentPaymentOutputsPresent(t *testing.T) {
+	makePacket := func() *Packet {
+		amount := int64(500)
+		return &Packet{
+			Version:   2,
+			TxVersion: 2,
+			Inputs: []PInput{{
+				PreviousTxID: hashPtr(0x11),
+				OutputIndex:  u32Ptr(0),
+			}},
+			Outputs: []POutput{{
+				Amount: &amount,
+				SPV0Info: &SilentPaymentV0Info{
+					ScanKey:  append([]byte(nil), testPub2...),
+					SpendKey: append([]byte(nil), testPub1...),
+				},
+			}},
+		}
+	}
+
+	witnessV2Script, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_2).
+		AddData(bytes.Repeat([]byte{0x01}, 32)).
+		Script()
+	require.NoError(t, err)
+
+	t.Run("witness_utxo", func(t *testing.T) {
+		pkt := makePacket()
+		u, err := NewUpdater(pkt)
+		require.NoError(t, err)
+
+		err = u.AddInWitnessUtxo(&wire.TxOut{
+			Value:    1000,
+			PkScript: witnessV2Script,
+		}, 0)
+		require.ErrorIs(t, err, ErrSilentPaymentSegwitVersion)
+	})
+
+	t.Run("non_witness_utxo", func(t *testing.T) {
+		pkt := makePacket()
+		u, err := NewUpdater(pkt)
+		require.NoError(t, err)
+
+		prevTx := wire.NewMsgTx(2)
+		prevTx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: *hashPtr(0x22), Index: 0},
+			Sequence:         wire.MaxTxInSequenceNum,
+		})
+		prevTx.AddTxOut(&wire.TxOut{
+			Value:    1000,
+			PkScript: witnessV2Script,
+		})
+
+		err = u.AddInNonWitnessUtxo(prevTx, 0)
+		require.ErrorIs(t, err, ErrSilentPaymentSegwitVersion)
+	})
+
+	t.Run("redeem_script", func(t *testing.T) {
+		pkt := makePacket()
+
+		p2shScript, err := txscript.NewScriptBuilder().
+			AddOp(txscript.OP_HASH160).
+			AddData(bytes.Repeat([]byte{0x02}, 20)).
+			AddOp(txscript.OP_EQUAL).
+			Script()
+		require.NoError(t, err)
+
+		u, err := NewUpdater(pkt)
+		require.NoError(t, err)
+		require.NoError(t, u.AddInWitnessUtxo(&wire.TxOut{
+			Value:    1000,
+			PkScript: p2shScript,
+		}, 0))
+
+		err = u.AddInRedeemScript(witnessV2Script, 0)
+		require.ErrorIs(t, err, ErrSilentPaymentSegwitVersion)
+	})
 }
 
 // TestNewV2DoesNotAliasGlobalPointers ensures caller can't mutate packet
@@ -2142,6 +2454,9 @@ var (
 	testPub1, _ = hex.DecodeString(
 		"024d6b24f372dd4551277c8df4ecc0655101e11c22894c8e05a3468409c865a72c",
 	)
+	testPub2, _ = hex.DecodeString(
+		"029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f",
+	)
 )
 
 // makeV2WithWitnessUtxo builds a minimal v2 Packet with a single P2WPKH input
@@ -2478,8 +2793,8 @@ func TestV2ExtractWithLocktime(t *testing.T) {
 		Version:   2,
 		TxVersion: 2,
 		Inputs: []PInput{{
-			PreviousTxID:          &txid,
-			OutputIndex:           &idx,
+			PreviousTxID:           &txid,
+			OutputIndex:            &idx,
 			RequiredHeightLocktime: &height,
 			WitnessUtxo: &wire.TxOut{
 				Value:    amt,
