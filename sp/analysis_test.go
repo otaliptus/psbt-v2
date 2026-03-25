@@ -14,21 +14,37 @@ import (
 )
 
 type bip375Vectors struct {
-	Version string `json:"version"`
-	Valid   []struct {
-		Description        string `json:"description"`
-		PSBT               string `json:"psbt"`
-		ExpectedECDHShares []struct {
-			ScanKey    string `json:"scan_key"`
-			InputIndex *int   `json:"input_index,omitempty"`
-		} `json:"expected_ecdh_shares"`
-		ExpectedOutputs []struct {
-			OutputIndex     int    `json:"output_index"`
-			Amount          int64  `json:"amount"`
-			IsSilentPayment bool   `json:"is_silent_payment"`
-			SPInfo          string `json:"sp_info,omitempty"`
-		} `json:"expected_outputs"`
-	} `json:"valid"`
+	Version string                `json:"version"`
+	Valid   []bip375ValidVector   `json:"valid"`
+	Invalid []bip375InvalidVector `json:"invalid"`
+}
+
+type bip375ValidVector struct {
+	Description        string                 `json:"description"`
+	PSBT               string                 `json:"psbt"`
+	InputKeys          []bip375VectorInputKey `json:"input_keys"`
+	ExpectedECDHShares []struct {
+		ScanKey    string `json:"scan_key"`
+		ECDHResult string `json:"ecdh_result"`
+		DLEQProof  string `json:"dleq_proof"`
+		InputIndex *int   `json:"input_index,omitempty"`
+	} `json:"expected_ecdh_shares"`
+	ExpectedOutputs []struct {
+		OutputIndex     int    `json:"output_index"`
+		Amount          int64  `json:"amount"`
+		IsSilentPayment bool   `json:"is_silent_payment"`
+		SPInfo          string `json:"sp_info,omitempty"`
+	} `json:"expected_outputs"`
+}
+
+type bip375VectorInputKey struct {
+	InputIndex int    `json:"input_index"`
+	PrivateKey string `json:"private_key"`
+}
+
+type bip375InvalidVector struct {
+	Description string `json:"description"`
+	PSBT        string `json:"psbt"`
 }
 
 func loadVectors(t *testing.T) bip375Vectors {
@@ -69,20 +85,7 @@ func decodePacket(t *testing.T, b64 string) *psbt.Packet {
 	return packet
 }
 
-func vectorByDescription(t *testing.T, description string) *struct {
-	Description        string `json:"description"`
-	PSBT               string `json:"psbt"`
-	ExpectedECDHShares []struct {
-		ScanKey    string `json:"scan_key"`
-		InputIndex *int   `json:"input_index,omitempty"`
-	} `json:"expected_ecdh_shares"`
-	ExpectedOutputs []struct {
-		OutputIndex     int    `json:"output_index"`
-		Amount          int64  `json:"amount"`
-		IsSilentPayment bool   `json:"is_silent_payment"`
-		SPInfo          string `json:"sp_info,omitempty"`
-	} `json:"expected_outputs"`
-} {
+func vectorByDescription(t *testing.T, description string) *bip375ValidVector {
 	t.Helper()
 
 	vectors := loadVectors(t)
@@ -93,6 +96,21 @@ func vectorByDescription(t *testing.T, description string) *struct {
 	}
 
 	t.Fatalf("vector %q not found", description)
+	return nil
+}
+
+func invalidVectorByDescription(t *testing.T,
+	description string) *bip375InvalidVector {
+	t.Helper()
+
+	vectors := loadVectors(t)
+	for i := range vectors.Invalid {
+		if vectors.Invalid[i].Description == description {
+			return &vectors.Invalid[i]
+		}
+	}
+
+	t.Fatalf("invalid vector %q not found", description)
 	return nil
 }
 
