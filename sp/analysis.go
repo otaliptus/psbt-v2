@@ -274,14 +274,24 @@ func anyMatchingPubKey(input *psbt.PInput,
 	candidates := make([][]byte, 0,
 		len(input.Bip32Derivation)+len(input.PartialSigs)+2,
 	)
+	hasStructuredSource := false
 	for _, derivation := range input.Bip32Derivation {
 		candidates = append(candidates, derivation.PubKey)
+		hasStructuredSource = true
 	}
 	for _, partialSig := range input.PartialSigs {
 		candidates = append(candidates, partialSig.PubKey)
 	}
-	candidates = append(candidates, finalWitnessPubKey(input.FinalScriptWitness)...)
-	candidates = append(candidates, finalScriptSigPubKey(input.FinalScriptSig)...)
+	witnessPubKeys := finalWitnessPubKey(input.FinalScriptWitness)
+	if len(witnessPubKeys) != 0 {
+		hasStructuredSource = true
+		candidates = append(candidates, witnessPubKeys...)
+	}
+	scriptSigPubKeys := finalScriptSigPubKey(input.FinalScriptSig)
+	if len(scriptSigPubKeys) != 0 {
+		hasStructuredSource = true
+		candidates = append(candidates, scriptSigPubKeys...)
+	}
 
 	for _, candidate := range candidates {
 		if !bytes.Equal(btcutil.Hash160(candidate), wantHash160) {
@@ -295,7 +305,12 @@ func anyMatchingPubKey(input *psbt.PInput,
 	for _, candidate := range candidates {
 		unique[string(candidate)] = candidate
 	}
-	if len(unique) != 1 {
+
+	// Some interop vectors provide exactly one input pubkey source for DLEQ
+	// verification without making it script-matchable. Fall back to that
+	// single candidate, but only when it is unambiguous and the packet has
+	// a structured key source beyond a lone partial signature.
+	if len(unique) != 1 || !hasStructuredSource {
 		return nil, fmt.Errorf("no unambiguous public key source")
 	}
 

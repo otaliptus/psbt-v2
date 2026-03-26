@@ -75,9 +75,12 @@ func TestValidateExtractableRejectsInvalidVectors(t *testing.T) {
 		"psbt structure: PSBT_GLOBAL_TX_MODIFIABLE with PSBT_OUT_SCRIPT set",
 		"ecdh coverage: PSBT_OUT_SCRIPT set - no eligible inputs",
 		"ecdh coverage: PSBT_OUT_SCRIPT set - Input 0 missing PSBT_IN_SP_ECDH_SHARE",
+		"ecdh coverage: input missing public key for DLEQ verification",
+		"ecdh coverage: one input/three sp outputs (different scan keys) - Output 1 missing ECDH share for scan key",
+		"ecdh coverage: two inputs/two sp outputs (different scan keys) - full coverage input 0 / partial coverage input 1",
 		"ecdh coverage: two inputs/one sp output (two scan keys) - Input 1 missing ECDH share for scan key",
-		"ecdh coverage: ineligible P2SH multisig input with PSBT_IN_SP_ECDH_SHARE set",
 		"ecdh coverage: ineligible P2TR input with NUMS point with PSBT_IN_SP_ECDH_SHARE set",
+		"input eligibility: segwit version greater than 1 in transaction inputs with silent payments output",
 		"output scripts: computed output script mismatch in PSBT_OUT_SCRIPT field from transaction inputs",
 		"output scripts: two sp outputs (same scan key/different spend keys) - outputs are not sorted lexicographically by spend key",
 		"output scripts: three sp outputs (same scan/spend keys) - output scripts are computed with swapped k values",
@@ -93,11 +96,31 @@ func TestValidateExtractableRejectsInvalidVectors(t *testing.T) {
 
 			packet, err := psbt.NewFromRawBytes(bytes.NewReader(raw), false)
 			if err != nil {
-				return
+				t.Fatalf("parse packet: %v", err)
 			}
 
 			if err := ValidateExtractable(packet); err == nil {
 				t.Fatalf("expected extractable validation failure")
+			}
+		})
+	}
+}
+
+func TestParserRejectsInvalidSilentPaymentVectors(t *testing.T) {
+	tests := []string{
+		"ecdh coverage: ineligible P2SH multisig input with PSBT_IN_SP_ECDH_SHARE set",
+	}
+
+	for _, description := range tests {
+		t.Run(description, func(t *testing.T) {
+			vector := invalidVectorByDescription(t, description)
+			raw, err := base64.StdEncoding.DecodeString(vector.PSBT)
+			if err != nil {
+				t.Fatalf("decode base64: %v", err)
+			}
+
+			if _, err := psbt.NewFromRawBytes(bytes.NewReader(raw), false); err == nil {
+				t.Fatalf("expected parser rejection")
 			}
 		})
 	}
