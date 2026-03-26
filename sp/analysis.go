@@ -86,6 +86,12 @@ func AnalyzePacket(pkt *psbt.Packet) (*Analysis, error) {
 			left := group.SilentOutputs[i]
 			right := group.SilentOutputs[j]
 
+			// Labeled change outputs reuse the original silent-payment code
+			// ordering, so keep packet order when both outputs are labeled.
+			if left.Label != nil && right.Label != nil {
+				return left.Index < right.Index
+			}
+
 			cmp := bytes.Compare(left.SpendKeyBytes, right.SpendKeyBytes)
 			if cmp != 0 {
 				return cmp < 0
@@ -243,9 +249,7 @@ func inputPublicKey(input *psbt.PInput, prevScript []byte) (*btcec.PublicKey, er
 		return schnorr.ParsePubKey(prevScript[2:34])
 
 	case txscript.IsPayToWitnessPubKeyHash(prevScript):
-		return anyMatchingPubKey(
-			input.Bip32Derivation, input.PartialSigs, prevScript[2:],
-		)
+		return anyMatchingPubKey(input, prevScript[2:])
 
 	case txscript.IsPayToScriptHash(prevScript):
 		if input.RedeemScript == nil ||
@@ -254,30 +258,30 @@ func inputPublicKey(input *psbt.PInput, prevScript []byte) (*btcec.PublicKey, er
 			return nil, fmt.Errorf("missing p2sh-p2wpkh redeem script")
 		}
 
-		return anyMatchingPubKey(
-			input.Bip32Derivation, input.PartialSigs, input.RedeemScript[2:],
-		)
+		return anyMatchingPubKey(input, input.RedeemScript[2:])
 
 	case txscript.IsPayToPubKeyHash(prevScript):
-		return anyMatchingPubKey(
-			input.Bip32Derivation, input.PartialSigs, prevScript[3:23],
-		)
+		return anyMatchingPubKey(input, prevScript[3:23])
 
 	default:
 		return nil, fmt.Errorf("unsupported prevout script")
 	}
 }
 
-func anyMatchingPubKey(derivations []*psbt.Bip32Derivation,
-	partialSigs []*psbt.PartialSig, wantHash160 []byte) (*btcec.PublicKey, error) {
+func anyMatchingPubKey(input *psbt.PInput,
+	wantHash160 []byte) (*btcec.PublicKey, error) {
 
-	candidates := make([][]byte, 0, len(derivations)+len(partialSigs))
-	for _, derivation := range derivations {
+	candidates := make([][]byte, 0,
+		len(input.Bip32Derivation)+len(input.PartialSigs)+2,
+	)
+	for _, derivation := range input.Bip32Derivation {
 		candidates = append(candidates, derivation.PubKey)
 	}
-	for _, partialSig := range partialSigs {
+	for _, partialSig := range input.PartialSigs {
 		candidates = append(candidates, partialSig.PubKey)
 	}
+	candidates = append(candidates, finalWitnessPubKey(input.FinalScriptWitness)...)
+	candidates = append(candidates, finalScriptSigPubKey(input.FinalScriptSig)...)
 
 	for _, candidate := range candidates {
 		if !bytes.Equal(btcutil.Hash160(candidate), wantHash160) {
@@ -300,6 +304,57 @@ func anyMatchingPubKey(derivations []*psbt.Bip32Derivation,
 	}
 
 	return nil, fmt.Errorf("missing public key")
+}
+
+func finalWitnessPubKey(serialized []byte) [][]byte {
+	if len(serialized) == 0 {
+		return nil
+	}
+
+	reader := bytes.NewReader(serialized)
+	count, err := wire.ReadVarInt(reader, 0)
+	if err != nil || count == 0 {
+		return nil
+	}
+
+	items := make([][]byte, 0, count)
+	for i := uint64(0); i < count; i++ {
+		item, err := wire.ReadVarBytes(reader, 0, 10000, "witness item")
+		if err != nil {
+			return nil
+		}
+		items = append(items, item)
+	}
+
+	last := items[len(items)-1]
+	if _, err := btcec.ParsePubKey(last); err == nil {
+		return [][]byte{last}
+	}
+
+	return nil
+}
+
+func finalScriptSigPubKey(script []byte) [][]byte {
+	if len(script) == 0 {
+		return nil
+	}
+
+	tokenizer := txscript.MakeScriptTokenizer(0, script)
+	var candidates [][]byte
+	for tokenizer.Next() {
+		data := tokenizer.Data()
+		if len(data) == 0 {
+			continue
+		}
+		if _, err := btcec.ParsePubKey(data); err == nil {
+			candidates = append(candidates, append([]byte(nil), data...))
+		}
+	}
+	if tokenizer.Err() != nil {
+		return nil
+	}
+
+	return candidates
 }
 
 func isTaprootNUMS(internalKey []byte) bool {

@@ -284,6 +284,30 @@ func carryV2InputFields(src, dst *PInput) {
 	dst.RequiredHeightLocktime = src.RequiredHeightLocktime
 }
 
+// carrySilentPaymentInputFields preserves the BIP-375 input share/proof data
+// when a finalizer replaces an input with a fresh PsbtInput. Extractor-side
+// verification still depends on these fields after finalization.
+func carrySilentPaymentInputFields(src, dst *PInput) {
+	if len(src.SPECDHShares) != 0 {
+		dst.SPECDHShares = make([]SilentPaymentECDHShare, len(src.SPECDHShares))
+		for i, share := range src.SPECDHShares {
+			dst.SPECDHShares[i] = SilentPaymentECDHShare{
+				ScanKey: append([]byte(nil), share.ScanKey...),
+				Share:   append([]byte(nil), share.Share...),
+			}
+		}
+	}
+	if len(src.SPDLEQProofs) != 0 {
+		dst.SPDLEQProofs = make([]SilentPaymentDLEQProof, len(src.SPDLEQProofs))
+		for i, proof := range src.SPDLEQProofs {
+			dst.SPDLEQProofs[i] = SilentPaymentDLEQProof{
+				ScanKey: append([]byte(nil), proof.ScanKey...),
+				Proof:   append([]byte(nil), proof.Proof...),
+			}
+		}
+	}
+}
+
 // finalizeNonWitnessInput attempts to create a PsbtInFinalScriptSig field for
 // the input at index inIndex, and removes all other fields except for the UTXO
 // field, for an input of type non-witness, or returns an error.
@@ -376,6 +400,7 @@ func finalizeNonWitnessInput(p *Packet, inIndex int) error {
 	newInput := NewPsbtInput(pInput.NonWitnessUtxo, nil)
 	newInput.FinalScriptSig = sigScript
 	carryV2InputFields(&pInput, newInput)
+	carrySilentPaymentInputFields(&pInput, newInput)
 
 	// Overwrite the entry in the input list at the correct index. Note
 	// that this removes all the other entries in the list for this input
@@ -519,6 +544,7 @@ func finalizeWitnessInput(p *Packet, inIndex int) error {
 
 	newInput.FinalScriptWitness = serializedWitness
 	carryV2InputFields(&pInput, newInput)
+	carrySilentPaymentInputFields(&pInput, newInput)
 
 	// Finally, we overwrite the entry in the input list at the correct
 	// index.
@@ -618,6 +644,7 @@ func finalizeTaprootInput(p *Packet, inIndex int) error {
 	newInput := NewPsbtInput(nil, pInput.WitnessUtxo)
 	newInput.FinalScriptWitness = serializedWitness
 	carryV2InputFields(pInput, newInput)
+	carrySilentPaymentInputFields(pInput, newInput)
 
 	// Finally, we overwrite the entry in the input list at the correct
 	// index.

@@ -21,3 +21,9 @@ func jacobianToPublicKey(point *btcec.JacobianPoint) (*btcec.PublicKey, bool) {
 	point.ToAffine()
 	return btcec.NewPublicKey(&point.X, &point.Y), true
 }
+
+func scalarBaseMultiply(scalar *btcec.ModNScalar) btcec.JacobianPoint {
+	var result btcec.JacobianPoint
+	btcec.ScalarBaseMultNonConst(scalar, &result)
+	return result
+}

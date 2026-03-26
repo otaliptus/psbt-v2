@@ -33,6 +33,7 @@ type bip375ValidVector struct {
 		OutputIndex     int    `json:"output_index"`
 		Amount          int64  `json:"amount"`
 		IsSilentPayment bool   `json:"is_silent_payment"`
+		Script          string `json:"script,omitempty"`
 		SPInfo          string `json:"sp_info,omitempty"`
 	} `json:"expected_outputs"`
 }

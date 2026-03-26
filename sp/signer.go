@@ -85,6 +85,12 @@ func AddSharesAndProofs(pkt *psbt.Packet, owned []OwnedInput) error {
 func VerifySharesAndProofs(pkt *psbt.Packet) error {
 	analysis, err := AnalyzePacket(pkt)
 	if err != nil {
+		if err == ErrNoSilentPaymentOutputs {
+			return nil
+		}
+		return err
+	}
+	if err := verifyUnexpectedInputMaterial(pkt, analysis); err != nil {
 		return err
 	}
 
