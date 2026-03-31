@@ -4,23 +4,17 @@ Go PSBT library with:
 
 - full [BIP-174 (PSBTv0)](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki) support
 - full [BIP-370 (PSBTv2)](https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki) support
-- [BIP-375](https://github.com/bitcoin/bips/blob/master/bip-0375.mediawiki) field transport in the base package
-- a higher-level `sp` package for the [BIP-352](https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki) / BIP-375 silent payment workflow
-- a standalone `sp/dleq` package for [BIP-374](https://github.com/bitcoin/bips/blob/master/bip-0374.mediawiki) proofs
+- [BIP-375](https://github.com/bitcoin/bips/blob/master/bip-0375.mediawiki) field transport (silent payment ECDH shares, DLEQ proofs, SP output info)
+
+The silent payment workflow (`sp/`) and DLEQ proof math (`sp/dleq/`) have been extracted to:
+- [`dleq374`](https://github.com/otaliptus/dleq374) — standalone BIP-374 DLEQ proof package
+- [`bip375-examples/go/sp`](https://github.com/otaliptus/bip375-examples/tree/go/v0/go/sp) — BIP-352/BIP-375 workflow
 
 ```bash
 go get github.com/otaliptus/psbt-v2
 ```
 
-## Package Layout
-
-| Package | Scope |
-| --- | --- |
-| `psbt-v2` | PSBTv0/v2 parsing, serialization, conversion, BIP-370 roles, BIP-375 field transport |
-| `psbt-v2/sp` | BIP-352/BIP-375 silent payment workflow: analysis, share/proof validation, script materialization, extraction checks |
-| `psbt-v2/sp/dleq` | Small BIP-374 proof package |
-
-The root package is still the PSBT library. Silent payments live in `sp` on top of it.
+This library handles BIP-375 field transport — parsing, serializing, and validating the six silent payment PSBT fields. It does not perform ECDH or DLEQ math itself.
 
 ## Why v2?
 
@@ -54,28 +48,14 @@ ctor.AddInput(newTxID, newIndex)
 ctor.AddOutput(amount, script)
 ```
 
-### Silent payment flow
+### Silent payment output
 
 ```go
-owned := []sp.OwnedInput{
-	{Index: 0, Secret: input0Secret},
-	{Index: 1, Secret: input1Secret},
-}
-
-if err := sp.AddSharesAndProofs(pkt, owned); err != nil {
-	return err
-}
-
-if err := sp.MaterializeOutputs(pkt); err != nil {
-	return err
-}
-
-tx, err := sp.Extract(pkt)
-if err != nil {
-	return err
-}
-_ = tx
+ctor, _ := psbt.NewConstructor(pkt)
+ctor.AddSilentPaymentOutput(amount, scanKey, spendKey, nil)
 ```
+
+For the full signing/materialization/extraction workflow, see [`bip375-examples/go/sp`](https://github.com/otaliptus/bip375-examples/tree/go/v0/go/sp).
 
 ## Status
 
@@ -84,22 +64,14 @@ _ = tx
 | PSBTv0 parse / serialize / roles | Done |
 | PSBTv2 parse / serialize / roles | Done |
 | v0 <-> v2 conversion | Done |
-| BIP-375 field transport in base package | Done |
-| `sp` silent payment workflow | Done |
-| `sp/dleq` BIP-374 proof package | Done |
-
-Current caveats:
-
-- `sp/dleq` proof generation uses btcd's variable-time arbitrary-point scalar multiplication
-- there is still some general cleanup debt in validation and linting
+| BIP-375 field transport | Done |
 
 ## Highlights
 
 - single `Packet` type with version-aware validation
 - tested v0 <-> v2 conversion helpers
 - BIP-375 output/input/global field support
-- vector-backed `sp` tests for materialization, extraction checks, ordering, and invalid cases
-- tracked BIP-374 proof vectors in `sp/dleq/testdata`
+- BIP-375 test vector coverage for field parsing and round-trip
 
 ## Commands
 
